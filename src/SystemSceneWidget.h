@@ -5,6 +5,7 @@
 #include <QWidget>
 
 #include "CelestialBody.h"
+#include "OrbitClassifier.h"
 #include "SystemLayoutEngine.h"
 
 class SystemSceneWidget : public QWidget {
@@ -31,6 +32,7 @@ private:
     QHash<int, CelestialBody> m_bodyMap;
     QVector<int> m_roots;
     QHash<int, BodyLayout> m_layout;
+    OrbitClassificationResult m_orbitClassification;
 
     double m_zoom = 1.0;
     QPointF m_panOffset;

@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(SimpleEDTerraform VERSION 0.1.4 LANGUAGES CXX)
+project(SimpleEDTerraform VERSION 0.1.5 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -16,6 +16,7 @@ add_executable(SimpleEDTerraform
     src/EdsmApiClient.cpp
     src/SystemModelBuilder.cpp
     src/SystemLayoutEngine.cpp
+    src/OrbitClassifier.cpp
     src/SystemSceneWidget.cpp
 )
 
