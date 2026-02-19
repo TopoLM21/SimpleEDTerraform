@@ -158,7 +158,10 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName) {
             if (!parentsArray.isEmpty()) {
                 const auto parentObject = parentsArray.first().toObject();
                 if (!parentObject.isEmpty()) {
-                    body.parentId = parentObject.constBegin().value().toInt(-1);
+                    const auto relation = parentObject.constBegin();
+                    body.parentRelationType = relation.key();
+                    body.parentId = relation.value().toInt(-1);
+                    body.orbitsBarycenter = relation.key().contains(QStringLiteral("Null"), Qt::CaseInsensitive);
                 }
             }
 

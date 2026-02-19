@@ -1,11 +1,14 @@
 #include "SystemSceneWidget.h"
 
+#include <QMouseEvent>
 #include <QPainter>
+#include <QWheelEvent>
 
 SystemSceneWidget::SystemSceneWidget(QWidget* parent)
     : QWidget(parent) {
     setMinimumSize(900, 600);
     setAutoFillBackground(true);
+    setMouseTracking(true);
 }
 
 void SystemSceneWidget::setSystemData(const QString& systemName,
@@ -14,8 +17,9 @@ void SystemSceneWidget::setSystemData(const QString& systemName,
     m_systemName = systemName;
     m_bodyMap = bodyMap;
     m_roots = roots;
-    m_layout = SystemLayoutEngine::buildLayout(m_bodyMap, m_roots, rect());
-    update();
+    m_zoom = 1.0;
+    m_panOffset = QPointF(0.0, 0.0);
+    rebuildLayout();
 }
 
 void SystemSceneWidget::paintEvent(QPaintEvent* event) {
@@ -31,6 +35,25 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     if (m_bodyMap.isEmpty() || m_layout.isEmpty()) {
         painter.drawText(20, 55, QStringLiteral("Нет данных для отображения."));
         return;
+    }
+
+    painter.save();
+    painter.translate(m_panOffset);
+    painter.scale(m_zoom, m_zoom);
+
+    painter.setPen(QPen(QColor(70, 92, 130), 1));
+    for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
+        if (!m_layout.contains(it.key()) || it->parentId < 0 || !m_layout.contains(it->parentId)) {
+            continue;
+        }
+
+        const auto& bodyLayout = m_layout[it.key()];
+        if (bodyLayout.orbitRadius <= 0.0) {
+            continue;
+        }
+
+        const auto& parentLayout = m_layout[it->parentId];
+        painter.drawEllipse(parentLayout.position, bodyLayout.orbitRadius, bodyLayout.orbitRadius);
     }
 
     painter.setPen(QPen(QColor(120, 140, 180), 1));
@@ -50,7 +73,9 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         const auto radius = m_layout[it.key()].radius;
 
         QColor bodyColor = QColor(245, 208, 96);
-        if (it->type.contains(QStringLiteral("Planet"), Qt::CaseInsensitive)) {
+        if (it->type.contains(QStringLiteral("Barycentre"), Qt::CaseInsensitive)) {
+            bodyColor = QColor(255, 120, 120);
+        } else if (it->type.contains(QStringLiteral("Planet"), Qt::CaseInsensitive)) {
             bodyColor = QColor(111, 200, 255);
         } else if (it->type.contains(QStringLiteral("Moon"), Qt::CaseInsensitive)) {
             bodyColor = QColor(170, 170, 180);
@@ -61,6 +86,79 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         painter.drawEllipse(point, radius, radius);
 
         painter.setPen(QColor(220, 230, 245));
-        painter.drawText(point + QPointF(radius + 4.0, -radius - 2.0), it->name);
+        const QString relationSuffix = it->orbitsBarycenter ? QStringLiteral(" [вокруг барицентра]") : QString();
+        painter.drawText(point + QPointF(radius + 4.0, -radius - 2.0), it->name + relationSuffix);
     }
+
+    painter.restore();
+}
+
+void SystemSceneWidget::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    rebuildLayout();
+}
+
+void SystemSceneWidget::mousePressEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton) {
+        m_isDragging = true;
+        m_lastMousePos = event->pos();
+        setCursor(Qt::ClosedHandCursor);
+        event->accept();
+        return;
+    }
+
+    QWidget::mousePressEvent(event);
+}
+
+void SystemSceneWidget::mouseMoveEvent(QMouseEvent* event) {
+    if (m_isDragging) {
+        const QPoint delta = event->pos() - m_lastMousePos;
+        m_lastMousePos = event->pos();
+        m_panOffset += QPointF(delta.x(), delta.y());
+        update();
+        event->accept();
+        return;
+    }
+
+    QWidget::mouseMoveEvent(event);
+}
+
+void SystemSceneWidget::mouseReleaseEvent(QMouseEvent* event) {
+    if (event->button() == Qt::LeftButton && m_isDragging) {
+        m_isDragging = false;
+        unsetCursor();
+        event->accept();
+        return;
+    }
+
+    QWidget::mouseReleaseEvent(event);
+}
+
+void SystemSceneWidget::wheelEvent(QWheelEvent* event) {
+    const QPoint numDegrees = event->angleDelta() / 8;
+    if (numDegrees.isNull()) {
+        QWidget::wheelEvent(event);
+        return;
+    }
+
+    const double step = numDegrees.y() / 15.0;
+    const double factor = 1.0 + step * 0.1;
+    const double newZoom = qBound(0.2, m_zoom * factor, 10.0);
+    if (qFuzzyCompare(newZoom, m_zoom)) {
+        return;
+    }
+
+    const QPointF mousePos = event->position();
+    const QPointF scenePosBefore = (mousePos - m_panOffset) / m_zoom;
+    m_zoom = newZoom;
+    const QPointF scenePosAfter = scenePosBefore * m_zoom;
+    m_panOffset = mousePos - scenePosAfter;
+
+    update();
+    event->accept();
+}
+
+void SystemSceneWidget::rebuildLayout() {
+    m_layout = SystemLayoutEngine::buildLayout(m_bodyMap, m_roots, rect());
+    update();
 }
