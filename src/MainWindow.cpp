@@ -7,6 +7,7 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
+#include <QDebug>
 
 #include "SystemModelBuilder.h"
 #include "SystemSceneWidget.h"
@@ -29,8 +30,17 @@ MainWindow::MainWindow(QWidget* parent)
         m_statusLabel->setText(QStringLiteral("Загружено тел: %1").arg(bodyMap.size()));
     });
 
+    connect(&m_apiClient, &EdsmApiClient::requestStateChanged, this, [this](const QString& state) {
+        m_statusLabel->setText(state);
+    });
+
+    connect(&m_apiClient, &EdsmApiClient::requestDebugInfo, this, [](const QString& message) {
+        qDebug().noquote() << message;
+    });
+
     connect(&m_apiClient, &EdsmApiClient::requestFailed, this, [this](const QString& reason) {
-        m_statusLabel->setText(QStringLiteral("Ошибка запроса"));
+        m_statusLabel->setText(QStringLiteral("Ошибка запроса к EDSM"));
+        qDebug().noquote() << QStringLiteral("[EDSM] Пользовательская ошибка: %1").arg(reason);
         QMessageBox::warning(this, QStringLiteral("EDSM API"), reason);
     });
 }
