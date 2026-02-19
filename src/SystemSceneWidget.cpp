@@ -4,6 +4,7 @@
 #include <QPainter>
 #include <QWheelEvent>
 
+
 SystemSceneWidget::SystemSceneWidget(QWidget* parent)
     : QWidget(parent) {
     setMinimumSize(900, 600);
@@ -19,6 +20,7 @@ void SystemSceneWidget::setSystemData(const QString& systemName,
     m_roots = roots;
     m_zoom = 1.0;
     m_panOffset = QPointF(0.0, 0.0);
+    m_orbitClassification = OrbitClassifier::classify(m_bodyMap);
     rebuildLayout();
 }
 
@@ -32,8 +34,15 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     painter.setPen(QColor(180, 200, 255));
     painter.drawText(20, 30, QStringLiteral("Система: %1").arg(m_systemName.isEmpty() ? QStringLiteral("—") : m_systemName));
 
+    const QStringList systemLabels = OrbitClassifier::systemTypeLabels(m_orbitClassification.systemTypes);
+    const QString systemTypesLine = systemLabels.isEmpty()
+        ? QStringLiteral("Типы системы: не обнаружены")
+        : QStringLiteral("Типы системы: %1").arg(systemLabels.join(QStringLiteral(", ")));
+    painter.setPen(QColor(148, 173, 230));
+    painter.drawText(20, 50, systemTypesLine);
+
     if (m_bodyMap.isEmpty() || m_layout.isEmpty()) {
-        painter.drawText(20, 55, QStringLiteral("Нет данных для отображения."));
+        painter.drawText(20, 75, QStringLiteral("Нет данных для отображения."));
         return;
     }
 
@@ -72,8 +81,12 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         const auto point = m_layout[it.key()].position;
         const auto radius = m_layout[it.key()].radius;
 
+        const QSet<BodyOrbitType> bodyTypes = m_orbitClassification.bodyTypes.value(it.key());
+
         QColor bodyColor = QColor(245, 208, 96);
-        if (it->type.contains(QStringLiteral("Barycentre"), Qt::CaseInsensitive)) {
+        if (bodyTypes.contains(BodyOrbitType::CircumbinaryPlanet)) {
+            bodyColor = QColor(126, 255, 200);
+        } else if (it->type.contains(QStringLiteral("Barycentre"), Qt::CaseInsensitive)) {
             bodyColor = QColor(255, 120, 120);
         } else if (it->type.contains(QStringLiteral("Planet"), Qt::CaseInsensitive)) {
             bodyColor = QColor(111, 200, 255);
@@ -85,9 +98,20 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         painter.setPen(Qt::NoPen);
         painter.drawEllipse(point, radius, radius);
 
+        QStringList labelParts;
+        labelParts.push_back(it->name);
+
+        if (it->orbitsBarycenter) {
+            labelParts.push_back(QStringLiteral("вокруг барицентра"));
+        }
+
+        const QStringList typeLabels = OrbitClassifier::bodyTypeLabels(bodyTypes);
+        if (!typeLabels.isEmpty()) {
+            labelParts.push_back(typeLabels.join(QStringLiteral(", ")));
+        }
+
         painter.setPen(QColor(220, 230, 245));
-        const QString relationSuffix = it->orbitsBarycenter ? QStringLiteral(" [вокруг барицентра]") : QString();
-        painter.drawText(point + QPointF(radius + 4.0, -radius - 2.0), it->name + relationSuffix);
+        painter.drawText(point + QPointF(radius + 4.0, -radius - 2.0), labelParts.join(QStringLiteral(" | ")));
     }
 
     painter.restore();
