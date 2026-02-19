@@ -39,6 +39,7 @@ struct OrbitClassificationResult {
 class OrbitClassifier {
 public:
     static OrbitClassificationResult classify(const QHash<int, CelestialBody>& bodyMap);
+    static bool isBarycenterType(const QString& type);
 
     static QString bodyTypeToLabel(BodyOrbitType type);
     static QString systemTypeToLabel(SystemOrbitType type);
