@@ -17,10 +17,15 @@ bool isPlanet(const CelestialBody& body) {
 }
 
 bool isBarycenter(const CelestialBody& body) {
-    return containsInsensitive(body.type, QStringLiteral("Barycentre"));
+    return OrbitClassifier::isBarycenterType(body.type);
 }
 
 } // namespace
+
+bool OrbitClassifier::isBarycenterType(const QString& type) {
+    return containsInsensitive(type, QStringLiteral("Barycentre"))
+        || containsInsensitive(type, QStringLiteral("Barycenter"));
+}
 
 OrbitClassificationResult OrbitClassifier::classify(const QHash<int, CelestialBody>& bodyMap) {
     OrbitClassificationResult result;

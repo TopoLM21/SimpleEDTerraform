@@ -78,7 +78,7 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         QColor bodyColor = QColor(245, 208, 96);
         if (bodyTypes.contains(BodyOrbitType::CircumbinaryPlanet)) {
             bodyColor = QColor(126, 255, 200);
-        } else if (it->type.contains(QStringLiteral("Barycentre"), Qt::CaseInsensitive)) {
+        } else if (OrbitClassifier::isBarycenterType(it->type)) {
             bodyColor = QColor(255, 120, 120);
         } else if (it->type.contains(QStringLiteral("Planet"), Qt::CaseInsensitive)) {
             bodyColor = QColor(111, 200, 255);
