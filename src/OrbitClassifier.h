@@ -12,6 +12,10 @@
 enum class BodyOrbitType {
     BinaryStarComponent,
     BinaryStarBarycenter,
+    BinaryNonStarBarycenter,
+    BinaryPlanetPairBarycenter,
+    BinaryPlanetNonStarBarycenter,
+    BinaryPlanetComponent,
     HierarchicalPairMemberBarycenter,
     HierarchicalPairOfPairsBarycenter,
     CircumbinaryPlanet,
@@ -19,6 +23,9 @@ enum class BodyOrbitType {
 
 enum class SystemOrbitType {
     BinaryStar,
+    BinaryNonStarPair,
+    BinaryPlanetPair,
+    BinaryPlanetNonStarPair,
     HierarchicalPairOfPairs,
     CircumbinaryPlanetarySystem,
 };

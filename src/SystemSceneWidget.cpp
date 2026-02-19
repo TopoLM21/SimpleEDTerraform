@@ -76,7 +76,15 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         const QSet<BodyOrbitType> bodyTypes = m_orbitClassification.bodyTypes.value(it.key());
 
         QColor bodyColor = QColor(245, 208, 96);
-        if (bodyTypes.contains(BodyOrbitType::CircumbinaryPlanet)) {
+        if (bodyTypes.contains(BodyOrbitType::BinaryPlanetPairBarycenter)) {
+            bodyColor = QColor(198, 115, 255);
+        } else if (bodyTypes.contains(BodyOrbitType::BinaryPlanetNonStarBarycenter)) {
+            bodyColor = QColor(255, 170, 90);
+        } else if (bodyTypes.contains(BodyOrbitType::BinaryNonStarBarycenter)) {
+            bodyColor = QColor(255, 138, 171);
+        } else if (bodyTypes.contains(BodyOrbitType::BinaryPlanetComponent)) {
+            bodyColor = QColor(140, 255, 168);
+        } else if (bodyTypes.contains(BodyOrbitType::CircumbinaryPlanet)) {
             bodyColor = QColor(126, 255, 200);
         } else if (OrbitClassifier::isBarycenterType(it->type)) {
             bodyColor = QColor(255, 120, 120);
