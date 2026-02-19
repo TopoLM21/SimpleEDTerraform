@@ -6,6 +6,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
 
@@ -27,11 +28,36 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName) {
 
     QNetworkRequest request(url);
     auto* reply = m_networkManager->get(request);
+    auto* timeoutTimer = new QTimer(reply);
+    timeoutTimer->setSingleShot(true);
+    timeoutTimer->setInterval(15000);
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, systemName]() {
+    connect(timeoutTimer, &QTimer::timeout, this, [this, reply]() {
+        if (!reply->isRunning()) {
+            return;
+        }
+
+        reply->setProperty("timedOut", true);
+        reply->abort();
+        emit requestFailed(QStringLiteral("Превышено время ожидания ответа EDSM"));
+    });
+    timeoutTimer->start();
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, systemName, timeoutTimer]() {
+        timeoutTimer->stop();
         reply->deleteLater();
 
+        const auto timedOut = reply->property("timedOut").toBool();
+        if (timedOut) {
+            return;
+        }
+
         if (reply->error() != QNetworkReply::NoError) {
+            if (reply->error() == QNetworkReply::OperationCanceledError) {
+                emit requestFailed(QStringLiteral("Превышено время ожидания ответа EDSM"));
+                return;
+            }
+
             emit requestFailed(reply->errorString());
             return;
         }
