@@ -7,6 +7,7 @@
 class QLabel;
 class QLineEdit;
 class QPushButton;
+class QComboBox;
 class SystemSceneWidget;
 
 class MainWindow : public QMainWindow {
@@ -20,6 +21,7 @@ private:
     EdsmApiClient m_apiClient;
     QLineEdit* m_systemNameEdit = nullptr;
     QPushButton* m_loadButton = nullptr;
+    QComboBox* m_sourceCombo = nullptr;
     QLabel* m_statusLabel = nullptr;
     SystemSceneWidget* m_sceneWidget = nullptr;
 };

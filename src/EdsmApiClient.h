@@ -13,6 +13,12 @@ enum class SystemDataSource {
     Merged
 };
 
+enum class SystemRequestMode {
+    AutoMerge,
+    EdsmOnly,
+    SpanshOnly
+};
+
 struct SystemBodiesResult {
     QString systemName;
     QVector<CelestialBody> bodies;
@@ -27,7 +33,8 @@ class EdsmApiClient : public QObject {
 public:
     explicit EdsmApiClient(QObject* parent = nullptr);
 
-    void requestSystemBodies(const QString& systemName);
+    void requestSystemBodies(const QString& systemName,
+                             SystemRequestMode mode = SystemRequestMode::AutoMerge);
     void requestSpanshSystemBodies(const QString& systemName);
 
 signals:

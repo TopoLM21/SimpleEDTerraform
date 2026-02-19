@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include <QComboBox>
 #include <QDebug>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -35,8 +36,25 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(m_loadButton, &QPushButton::clicked, this, [this]() {
         const auto systemName = m_systemNameEdit->text().trimmed();
-        m_statusLabel->setText(QStringLiteral("Загрузка данных: EDSM (приоритет), Spansh (fallback)..."));
-        m_apiClient.requestSystemBodies(systemName);
+
+        SystemRequestMode mode = SystemRequestMode::AutoMerge;
+        QString requestStatus = QStringLiteral("Загрузка данных: EDSM с fallback на Spansh...");
+
+        switch (m_sourceCombo->currentIndex()) {
+        case 1:
+            mode = SystemRequestMode::EdsmOnly;
+            requestStatus = QStringLiteral("Загрузка данных только из EDSM...");
+            break;
+        case 2:
+            mode = SystemRequestMode::SpanshOnly;
+            requestStatus = QStringLiteral("Загрузка данных только из Spansh...");
+            break;
+        default:
+            break;
+        }
+
+        m_statusLabel->setText(requestStatus);
+        m_apiClient.requestSystemBodies(systemName, mode);
     });
 
     connect(&m_apiClient, &EdsmApiClient::systemBodiesReady, this, [this](const SystemBodiesResult& result) {
@@ -86,11 +104,19 @@ void MainWindow::setupUi() {
     m_systemNameEdit = new QLineEdit(central);
     m_systemNameEdit->setPlaceholderText(QStringLiteral("Например: Sol"));
 
+    auto* sourceTitle = new QLabel(QStringLiteral("Источник:"), central);
+    m_sourceCombo = new QComboBox(central);
+    m_sourceCombo->addItem(QStringLiteral("Авто (EDSM → Spansh fallback)"));
+    m_sourceCombo->addItem(QStringLiteral("Только EDSM"));
+    m_sourceCombo->addItem(QStringLiteral("Только Spansh"));
+
     m_loadButton = new QPushButton(QStringLiteral("Загрузить"), central);
     m_statusLabel = new QLabel(QStringLiteral("Ожидание запроса"), central);
 
     topPanel->addWidget(systemNameTitle);
     topPanel->addWidget(m_systemNameEdit, 1);
+    topPanel->addWidget(sourceTitle);
+    topPanel->addWidget(m_sourceCombo);
     topPanel->addWidget(m_loadButton);
 
     m_sceneWidget = new SystemSceneWidget(central);
