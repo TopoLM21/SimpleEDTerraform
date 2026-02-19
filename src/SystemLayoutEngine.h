@@ -9,6 +9,7 @@
 struct BodyLayout {
     QPointF position;
     double radius = 6.0;
+    double orbitRadius = 0.0;
 };
 
 class SystemLayoutEngine {
@@ -21,6 +22,6 @@ private:
     static void layoutChildrenRecursive(const QHash<int, CelestialBody>& bodyMap,
                                         QHash<int, BodyLayout>& layout,
                                         int bodyId,
-                                        double baseDistancePx,
-                                        double angleOffsetRad);
+                                        double pxPerAu,
+                                        double fallbackDistancePx);
 };
