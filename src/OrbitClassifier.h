@@ -5,6 +5,8 @@
 #include <QString>
 #include <QStringList>
 
+#include <type_traits>
+
 #include "CelestialBody.h"
 
 enum class BodyOrbitType {
@@ -20,6 +22,14 @@ enum class SystemOrbitType {
     HierarchicalPairOfPairs,
     CircumbinaryPlanetarySystem,
 };
+
+inline uint qHash(const BodyOrbitType key, const uint seed = 0) noexcept {
+    return ::qHash(static_cast<std::underlying_type_t<BodyOrbitType>>(key), seed);
+}
+
+inline uint qHash(const SystemOrbitType key, const uint seed = 0) noexcept {
+    return ::qHash(static_cast<std::underlying_type_t<SystemOrbitType>>(key), seed);
+}
 
 struct OrbitClassificationResult {
     QHash<int, QSet<BodyOrbitType>> bodyTypes;
