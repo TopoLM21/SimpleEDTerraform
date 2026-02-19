@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include <QDebug>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
@@ -7,10 +8,26 @@
 #include <QPushButton>
 #include <QVBoxLayout>
 #include <QWidget>
-#include <QDebug>
 
 #include "SystemModelBuilder.h"
 #include "SystemSceneWidget.h"
+
+namespace {
+
+QString dataSourceTitle(const SystemDataSource source) {
+    switch (source) {
+    case SystemDataSource::Edsm:
+        return QStringLiteral("EDSM");
+    case SystemDataSource::Spansh:
+        return QStringLiteral("Spansh");
+    case SystemDataSource::Merged:
+        return QStringLiteral("EDSM + Spansh");
+    }
+
+    return QStringLiteral("Unknown");
+}
+
+} // namespace
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
@@ -18,16 +35,31 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(m_loadButton, &QPushButton::clicked, this, [this]() {
         const auto systemName = m_systemNameEdit->text().trimmed();
-        m_statusLabel->setText(QStringLiteral("Загрузка данных из EDSM..."));
+        m_statusLabel->setText(QStringLiteral("Загрузка данных: EDSM (приоритет), Spansh (fallback)..."));
         m_apiClient.requestSystemBodies(systemName);
     });
 
-    connect(&m_apiClient, &EdsmApiClient::systemBodiesReady, this, [this](const QString& systemName, const QVector<CelestialBody>& bodies) {
-        const auto bodyMap = SystemModelBuilder::buildBodyMap(bodies);
+    connect(&m_apiClient, &EdsmApiClient::systemBodiesReady, this, [this](const SystemBodiesResult& result) {
+        const auto bodyMap = SystemModelBuilder::buildBodyMap(result.bodies);
         const auto roots = SystemModelBuilder::findRootBodies(bodyMap);
 
-        m_sceneWidget->setSystemData(systemName, bodyMap, roots);
-        m_statusLabel->setText(QStringLiteral("Загружено тел: %1").arg(bodyMap.size()));
+        m_sceneWidget->setSystemData(result.systemName, bodyMap, roots);
+
+        QString status = QStringLiteral("Источник: %1. Загружено тел: %2")
+                             .arg(dataSourceTitle(result.selectedSource))
+                             .arg(bodyMap.size());
+
+        if (result.hadConflict) {
+            status += QStringLiteral(". Конфликт данных: выбран приоритет EDSM");
+        }
+
+        if (result.selectedSource == SystemDataSource::Merged) {
+            status += QStringLiteral(". EDSM=%1, Spansh=%2")
+                          .arg(result.hasEdsmData ? QStringLiteral("да") : QStringLiteral("нет"))
+                          .arg(result.hasSpanshData ? QStringLiteral("да") : QStringLiteral("нет"));
+        }
+
+        m_statusLabel->setText(status);
     });
 
     connect(&m_apiClient, &EdsmApiClient::requestStateChanged, this, [this](const QString& state) {
@@ -39,9 +71,9 @@ MainWindow::MainWindow(QWidget* parent)
     });
 
     connect(&m_apiClient, &EdsmApiClient::requestFailed, this, [this](const QString& reason) {
-        m_statusLabel->setText(QStringLiteral("Ошибка запроса к EDSM"));
-        qDebug().noquote() << QStringLiteral("[EDSM] Пользовательская ошибка: %1").arg(reason);
-        QMessageBox::warning(this, QStringLiteral("EDSM API"), reason);
+        m_statusLabel->setText(QStringLiteral("Ошибка запроса к EDSM/Spansh"));
+        qDebug().noquote() << QStringLiteral("[API] Пользовательская ошибка: %1").arg(reason);
+        QMessageBox::warning(this, QStringLiteral("System API"), reason);
     });
 }
 
@@ -69,5 +101,5 @@ void MainWindow::setupUi() {
 
     setCentralWidget(central);
     resize(1200, 780);
-    setWindowTitle(QStringLiteral("SimpleEDTerraform — EDSM System Viewer"));
+    setWindowTitle(QStringLiteral("SimpleEDTerraform — EDSM/Spansh System Viewer"));
 }
