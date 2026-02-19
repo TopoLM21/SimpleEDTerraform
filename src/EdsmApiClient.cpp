@@ -6,6 +6,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QSslError>
 #include <QTimer>
 #include <QUrl>
 #include <QUrlQuery>
@@ -16,18 +17,72 @@ EdsmApiClient::EdsmApiClient(QObject* parent)
 }
 
 void EdsmApiClient::requestSystemBodies(const QString& systemName) {
-    if (systemName.trimmed().isEmpty()) {
+    const auto trimmedSystemName = systemName.trimmed();
+    if (trimmedSystemName.isEmpty()) {
         emit requestFailed(QStringLiteral("Название системы не может быть пустым."));
         return;
     }
 
     QUrl url(QStringLiteral("https://www.edsm.net/api-system-v1/bodies"));
     QUrlQuery query;
-    query.addQueryItem(QStringLiteral("systemName"), systemName.trimmed());
+    query.addQueryItem(QStringLiteral("systemName"), trimmedSystemName);
     url.setQuery(query);
+
+    emit requestStateChanged(QStringLiteral("Подготовка запроса к EDSM..."));
+    emit requestDebugInfo(QStringLiteral("[EDSM] Отправка запроса. systemName='%1', url=%2")
+                              .arg(trimmedSystemName, url.toString()));
 
     QNetworkRequest request(url);
     auto* reply = m_networkManager->get(request);
+
+    emit requestStateChanged(QStringLiteral("Запрос отправлен, ожидаем ответ..."));
+
+    connect(reply, &QNetworkReply::metaDataChanged, this, [this, reply]() {
+        emit requestStateChanged(QStringLiteral("Получены заголовки ответа EDSM..."));
+        emit requestDebugInfo(QStringLiteral("[EDSM] Заголовки получены. HTTP=%1, url=%2")
+                                  .arg(reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt())
+                                  .arg(reply->url().toString()));
+    });
+
+    connect(reply, &QNetworkReply::downloadProgress, this, [this, reply](qint64 received, qint64 total) {
+        if (total > 0) {
+            emit requestStateChanged(QStringLiteral("Загрузка данных: %1/%2 байт").arg(received).arg(total));
+            emit requestDebugInfo(QStringLiteral("[EDSM] Прогресс загрузки: %1/%2 байт, url=%3")
+                                      .arg(received)
+                                      .arg(total)
+                                      .arg(reply->url().toString()));
+            return;
+        }
+
+        emit requestStateChanged(QStringLiteral("Загрузка данных: %1 байт").arg(received));
+        emit requestDebugInfo(QStringLiteral("[EDSM] Прогресс загрузки: %1 байт (total неизвестен), url=%2")
+                                  .arg(received)
+                                  .arg(reply->url().toString()));
+    });
+
+    connect(reply, &QNetworkReply::sslErrors, this, [this, reply](const QList<QSslError>& errors) {
+        QStringList sslErrorTexts;
+        sslErrorTexts.reserve(errors.size());
+        for (const auto& error : errors) {
+            sslErrorTexts.push_back(error.errorString());
+        }
+
+        emit requestStateChanged(QStringLiteral("Проблема с SSL при соединении с EDSM."));
+        emit requestDebugInfo(QStringLiteral("[EDSM] SSL ошибки (%1), url=%2: %3")
+                                  .arg(errors.size())
+                                  .arg(reply->url().toString(), sslErrorTexts.join(QStringLiteral(" | "))));
+    });
+
+    connect(reply,
+            qOverload<QNetworkReply::NetworkError>(&QNetworkReply::errorOccurred),
+            this,
+            [this, reply](QNetworkReply::NetworkError errorCode) {
+                emit requestStateChanged(QStringLiteral("Ошибка сети при запросе к EDSM."));
+                emit requestDebugInfo(QStringLiteral("[EDSM] Ошибка сети: code=%1, text='%2', url=%3")
+                                          .arg(static_cast<int>(errorCode))
+                                          .arg(reply->errorString(), reply->url().toString()));
+            });
+
     auto* timeoutTimer = new QTimer(reply);
     timeoutTimer->setSingleShot(true);
     timeoutTimer->setInterval(15000);
@@ -39,11 +94,13 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName) {
 
         reply->setProperty("timedOut", true);
         reply->abort();
+        emit requestStateChanged(QStringLiteral("Истекло время ожидания ответа EDSM."));
+        emit requestDebugInfo(QStringLiteral("[EDSM] Таймаут запроса. url=%1").arg(reply->url().toString()));
         emit requestFailed(QStringLiteral("Превышено время ожидания ответа EDSM"));
     });
     timeoutTimer->start();
 
-    connect(reply, &QNetworkReply::finished, this, [this, reply, systemName, timeoutTimer]() {
+    connect(reply, &QNetworkReply::finished, this, [this, reply, trimmedSystemName, timeoutTimer]() {
         timeoutTimer->stop();
         reply->deleteLater();
 
@@ -54,17 +111,31 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName) {
 
         if (reply->error() != QNetworkReply::NoError) {
             if (reply->error() == QNetworkReply::OperationCanceledError) {
+                emit requestStateChanged(QStringLiteral("Запрос прерван: превышено время ожидания."));
+                emit requestDebugInfo(QStringLiteral("[EDSM] Запрос прерван после таймаута. code=%1, url=%2")
+                                          .arg(static_cast<int>(reply->error()))
+                                          .arg(reply->url().toString()));
                 emit requestFailed(QStringLiteral("Превышено время ожидания ответа EDSM"));
                 return;
             }
 
+            emit requestDebugInfo(QStringLiteral("[EDSM] Завершение с ошибкой. code=%1, text='%2', url=%3")
+                                      .arg(static_cast<int>(reply->error()))
+                                      .arg(reply->errorString(), reply->url().toString()));
             emit requestFailed(reply->errorString());
             return;
         }
 
+        emit requestStateChanged(QStringLiteral("Ответ получен, разбираем данные..."));
         const auto payload = reply->readAll();
+        emit requestDebugInfo(QStringLiteral("[EDSM] Получен payload: %1 байт, url=%2")
+                                  .arg(payload.size())
+                                  .arg(reply->url().toString()));
+
         const auto document = QJsonDocument::fromJson(payload);
         if (!document.isObject()) {
+            emit requestStateChanged(QStringLiteral("Ошибка разбора ответа EDSM."));
+            emit requestDebugInfo(QStringLiteral("[EDSM] Ошибка парсинга: корневой JSON не объект."));
             emit requestFailed(QStringLiteral("Ответ EDSM имеет неверный формат."));
             return;
         }
@@ -94,6 +165,10 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName) {
             bodies.push_back(body);
         }
 
-        emit systemBodiesReady(systemName.trimmed(), bodies);
+        emit requestStateChanged(QStringLiteral("Данные EDSM успешно обработаны."));
+        emit requestDebugInfo(QStringLiteral("[EDSM] Парсинг завершен. systemName='%1', bodies=%2")
+                                  .arg(trimmedSystemName)
+                                  .arg(bodies.size()));
+        emit systemBodiesReady(trimmedSystemName, bodies);
     });
 }
