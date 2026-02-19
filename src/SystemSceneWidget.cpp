@@ -65,14 +65,6 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         painter.drawEllipse(parentLayout.position, bodyLayout.orbitRadius, bodyLayout.orbitRadius);
     }
 
-    painter.setPen(QPen(QColor(120, 140, 180), 1));
-    for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
-        if (it->parentId < 0 || !m_layout.contains(it.key()) || !m_layout.contains(it->parentId)) {
-            continue;
-        }
-        painter.drawLine(m_layout[it.key()].position, m_layout[it->parentId].position);
-    }
-
     for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
         if (!m_layout.contains(it.key())) {
             continue;
