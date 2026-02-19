@@ -123,13 +123,96 @@ QString readString(const QJsonObject& object, const QStringList& keys) {
     return QString();
 }
 
+QJsonArray readArray(const QJsonObject& object, const QStringList& keys) {
+    for (const auto& key : keys) {
+        const auto value = object.value(key);
+        if (value.isArray()) {
+            return value.toArray();
+        }
+    }
+
+    return QJsonArray();
+}
+
+QString readMessageField(const QJsonObject& object) {
+    for (const auto& key : {QStringLiteral("error"),
+                            QStringLiteral("message"),
+                            QStringLiteral("msg"),
+                            QStringLiteral("detail"),
+                            QStringLiteral("description")}) {
+        const auto value = object.value(key);
+        if (value.isString()) {
+            return value.toString();
+        }
+
+        if (value.isObject()) {
+            const auto nested = value.toObject();
+            const auto nestedMessage = readString(nested,
+                                                  {QStringLiteral("message"),
+                                                   QStringLiteral("error"),
+                                                   QStringLiteral("detail"),
+                                                   QStringLiteral("description")});
+            if (!nestedMessage.isEmpty()) {
+                return nestedMessage;
+            }
+        }
+    }
+
+    return QString();
+}
+
 QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
-    QJsonArray bodiesArray;
-    if (rootObject.value(QStringLiteral("bodies")).isArray()) {
-        bodiesArray = rootObject.value(QStringLiteral("bodies")).toArray();
-    } else if (rootObject.value(QStringLiteral("system")).isObject()) {
-        const auto systemObject = rootObject.value(QStringLiteral("system")).toObject();
-        bodiesArray = systemObject.value(QStringLiteral("bodies")).toArray();
+    QJsonArray bodiesArray = readArray(rootObject,
+                                       {QStringLiteral("bodies"),
+                                        QStringLiteral("systemBodies"),
+                                        QStringLiteral("system_bodies"),
+                                        QStringLiteral("body")});
+
+    const auto systemObject = rootObject.value(QStringLiteral("system")).toObject();
+    if (bodiesArray.isEmpty() && !systemObject.isEmpty()) {
+        bodiesArray = readArray(systemObject,
+                                {QStringLiteral("bodies"),
+                                 QStringLiteral("systemBodies"),
+                                 QStringLiteral("system_bodies"),
+                                 QStringLiteral("body")});
+    }
+
+    const auto dataObject = rootObject.value(QStringLiteral("data")).toObject();
+    if (bodiesArray.isEmpty() && !dataObject.isEmpty()) {
+        bodiesArray = readArray(dataObject,
+                                {QStringLiteral("bodies"),
+                                 QStringLiteral("systemBodies"),
+                                 QStringLiteral("system_bodies"),
+                                 QStringLiteral("body")});
+
+        if (bodiesArray.isEmpty()) {
+            const auto nestedSystem = dataObject.value(QStringLiteral("system")).toObject();
+            bodiesArray = readArray(nestedSystem,
+                                    {QStringLiteral("bodies"),
+                                     QStringLiteral("systemBodies"),
+                                     QStringLiteral("system_bodies"),
+                                     QStringLiteral("body")});
+        }
+    }
+
+    if (bodiesArray.isEmpty()) {
+        for (auto it = rootObject.constBegin(); it != rootObject.constEnd(); ++it) {
+            if (!it.value().isArray()) {
+                continue;
+            }
+
+            const auto candidate = it.value().toArray();
+            if (candidate.isEmpty() || !candidate.first().isObject()) {
+                continue;
+            }
+
+            const auto firstObject = candidate.first().toObject();
+            if (firstObject.contains(QStringLiteral("id")) || firstObject.contains(QStringLiteral("bodyId"))
+                || firstObject.contains(QStringLiteral("name"))) {
+                bodiesArray = candidate;
+                break;
+            }
+        }
     }
 
     QVector<CelestialBody> bodies;
@@ -274,7 +357,17 @@ void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
         timeoutTimer->stop();
         reply->deleteLater();
 
+        const int httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        emit requestDebugInfo(QStringLiteral("[SPANSH] Ответ получен. status=%1, networkError=%2")
+                                  .arg(httpStatusCode)
+                                  .arg(reply->error()));
+
         if (reply->property("timedOut").toBool()) {
+            return;
+        }
+
+        if (httpStatusCode == 404 || httpStatusCode == 422) {
+            emit requestFailed(QStringLiteral("Система не найдена в Spansh"));
             return;
         }
 
@@ -290,11 +383,26 @@ void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
             return;
         }
 
+        const auto rootObject = document.object();
+        emit requestDebugInfo(QStringLiteral("[SPANSH] Корневые ключи JSON: %1")
+                                  .arg(rootObject.keys().join(QStringLiteral(", "))));
+
         SystemBodiesResult result;
         result.systemName = trimmedSystemName;
-        result.bodies = parseSpanshBodies(document.object());
+        result.bodies = parseSpanshBodies(rootObject);
         result.selectedSource = SystemDataSource::Spansh;
         result.hasSpanshData = !result.bodies.isEmpty();
+
+        emit requestDebugInfo(QStringLiteral("[SPANSH] Распарсено тел: %1")
+                                  .arg(result.bodies.size()));
+
+        if (result.bodies.isEmpty()) {
+            const auto apiMessage = readMessageField(rootObject);
+            if (!apiMessage.isEmpty()) {
+                emit requestFailed(apiMessage);
+                return;
+            }
+        }
 
         emit systemBodiesReady(result);
     });
@@ -489,8 +597,20 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemR
         spanshReply->deleteLater();
         state->spanshDone = true;
 
+        const int httpStatusCode = spanshReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        emit requestDebugInfo(QStringLiteral("[SPANSH] Ответ получен. mode=%1, status=%2, networkError=%3")
+                                  .arg(modeToText(mode))
+                                  .arg(httpStatusCode)
+                                  .arg(spanshReply->error()));
+
         if (spanshReply->property("timedOut").toBool()) {
             state->spanshError = QStringLiteral("Превышено время ожидания ответа Spansh");
+            finalizeRequest();
+            return;
+        }
+
+        if (httpStatusCode == 404 || httpStatusCode == 422) {
+            state->spanshError = QStringLiteral("Система не найдена в Spansh");
             finalizeRequest();
             return;
         }
@@ -513,11 +633,23 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemR
             return;
         }
 
+        const auto rootObject = document.object();
+        emit requestDebugInfo(QStringLiteral("[SPANSH] Корневые ключи JSON. mode=%1, keys=%2")
+                                  .arg(modeToText(mode), rootObject.keys().join(QStringLiteral(", "))));
+
         state->spanshParsed = true;
-        state->spanshBodies = parseSpanshBodies(document.object());
+        state->spanshBodies = parseSpanshBodies(rootObject);
         emit requestDebugInfo(QStringLiteral("[SPANSH] Ответ обработан. mode=%1, bodies=%2")
                                   .arg(modeToText(mode))
                                   .arg(state->spanshBodies.size()));
+
+        if (state->spanshBodies.isEmpty()) {
+            const auto apiMessage = readMessageField(rootObject);
+            if (!apiMessage.isEmpty()) {
+                state->spanshError = apiMessage;
+            }
+        }
+
         finalizeRequest();
     });
 }
