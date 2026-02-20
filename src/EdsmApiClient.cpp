@@ -8,6 +8,7 @@
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
+#include <QRegularExpression>
 #include <QSharedPointer>
 #include <QSslError>
 #include <QTimer>
@@ -165,13 +166,6 @@ QString readMessageField(const QJsonObject& object) {
 QString readSystemIndexFromEdsmObject(const QJsonObject& object) {
     for (const auto& key : {QStringLiteral("id64"), QStringLiteral("systemId64"), QStringLiteral("id")}) {
         const auto value = object.value(key);
-        if (value.isDouble()) {
-            const auto numericValue = value.toVariant().toLongLong();
-            if (numericValue > 0) {
-                return QString::number(numericValue);
-            }
-        }
-
         if (value.isString()) {
             const auto textValue = value.toString().trimmed();
             if (!textValue.isEmpty()) {
@@ -183,7 +177,27 @@ QString readSystemIndexFromEdsmObject(const QJsonObject& object) {
     return QString();
 }
 
-QString parseEdsmSystemIndex(const QJsonDocument& document) {
+QString parseEdsmSystemIndexFromRawPayload(const QByteArray& payload) {
+    // QJsonValue хранит числа как double, поэтому значения id64 > 2^53 могут
+    // округляться. Для полей id64/systemId64/id читаем исходный JSON-токен.
+    static const QRegularExpression kSystemIndexRegex(
+        QStringLiteral("\"(?:id64|systemId64|id)\"\\s*:\\s*(?:\"([0-9]+)\"|([0-9]+))"));
+
+    const auto payloadText = QString::fromUtf8(payload);
+    const auto match = kSystemIndexRegex.match(payloadText);
+    if (!match.hasMatch()) {
+        return QString();
+    }
+
+    const auto quotedValue = match.captured(1);
+    if (!quotedValue.isEmpty()) {
+        return quotedValue;
+    }
+
+    return match.captured(2);
+}
+
+QString parseEdsmSystemIndex(const QJsonDocument& document, const QByteArray& payload) {
     if (document.isObject()) {
         const auto rootObject = document.object();
         auto index = readSystemIndexFromEdsmObject(rootObject);
@@ -204,7 +218,7 @@ QString parseEdsmSystemIndex(const QJsonDocument& document) {
         }
     }
 
-    return QString();
+    return parseEdsmSystemIndexFromRawPayload(payload);
 }
 
 QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
@@ -538,7 +552,7 @@ void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
             return;
         }
 
-        const auto systemIndex = parseEdsmSystemIndex(document);
+        const auto systemIndex = parseEdsmSystemIndex(document, payload);
         if (systemIndex.isEmpty()) {
             emit requestFailed(QStringLiteral("EDSM не вернул индекс системы для запроса к Spansh."));
             return;
@@ -805,7 +819,7 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemR
             return;
         }
 
-        const auto systemIndex = parseEdsmSystemIndex(document);
+        const auto systemIndex = parseEdsmSystemIndex(document, payload);
         if (systemIndex.isEmpty()) {
             state->spanshDone = true;
             state->spanshError = QStringLiteral("EDSM не вернул индекс системы для запроса к Spansh.");
