@@ -7,16 +7,30 @@
 #include <QWheelEvent>
 
 namespace {
-bool isStarBody(const CelestialBody& body) {
-    return body.type.contains(QStringLiteral("Star"), Qt::CaseInsensitive);
-}
+QColor bodyColorForClass(const CelestialBody::BodyClass bodyClass, const QSet<BodyOrbitType>& bodyTypes) {
+    QColor bodyColor(190, 210, 240);
+    switch (bodyClass) {
+    case CelestialBody::BodyClass::Star:
+        bodyColor = QColor(255, 206, 92);
+        break;
+    case CelestialBody::BodyClass::Planet:
+        bodyColor = QColor(98, 176, 255);
+        break;
+    case CelestialBody::BodyClass::Moon:
+        bodyColor = QColor(166, 166, 176);
+        break;
+    case CelestialBody::BodyClass::Barycenter:
+    case CelestialBody::BodyClass::Unknown:
+        break;
+    }
 
-bool isPlanetBody(const CelestialBody& body) {
-    return body.type.contains(QStringLiteral("Planet"), Qt::CaseInsensitive);
-}
+    if (bodyTypes.contains(BodyOrbitType::BinaryPlanetComponent)) {
+        bodyColor = QColor(140, 255, 168);
+    } else if (bodyTypes.contains(BodyOrbitType::CircumbinaryPlanet)) {
+        bodyColor = QColor(126, 255, 200);
+    }
 
-bool isMoonBody(const CelestialBody& body) {
-    return body.type.contains(QStringLiteral("Moon"), Qt::CaseInsensitive);
+    return bodyColor;
 }
 }
 
@@ -68,24 +82,8 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     painter.translate(m_panOffset);
     painter.scale(m_zoom, m_zoom);
 
-    painter.setPen(QPen(QColor(70, 92, 130), 1));
     for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
-        if (!m_layout.contains(it.key()) || it->parentId < 0 || !m_layout.contains(it->parentId)
-            || OrbitClassifier::isBarycenterType(it->type)) {
-            continue;
-        }
-
-        const auto& bodyLayout = m_layout[it.key()];
-        if (bodyLayout.orbitRadius <= 0.0) {
-            continue;
-        }
-
-        const auto& parentLayout = m_layout[it->parentId];
-        painter.drawEllipse(parentLayout.position, bodyLayout.orbitRadius, bodyLayout.orbitRadius);
-    }
-
-    for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
-        if (!m_layout.contains(it.key()) || OrbitClassifier::isBarycenterType(it->type)) {
+        if (!m_layout.contains(it.key()) || it->bodyClass == CelestialBody::BodyClass::Barycenter) {
             continue;
         }
 
@@ -94,20 +92,7 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
 
         const QSet<BodyOrbitType> bodyTypes = m_orbitClassification.bodyTypes.value(it.key());
 
-        QColor bodyColor = QColor(190, 210, 240);
-        if (isStarBody(*it)) {
-            bodyColor = QColor(255, 208, 96);
-        } else if (isPlanetBody(*it)) {
-            bodyColor = QColor(111, 200, 255);
-        } else if (isMoonBody(*it)) {
-            bodyColor = QColor(170, 170, 180);
-        }
-
-        if (bodyTypes.contains(BodyOrbitType::BinaryPlanetComponent)) {
-            bodyColor = QColor(140, 255, 168);
-        } else if (bodyTypes.contains(BodyOrbitType::CircumbinaryPlanet)) {
-            bodyColor = QColor(126, 255, 200);
-        }
+        const QColor bodyColor = bodyColorForClass(it->bodyClass, bodyTypes);
 
         painter.setBrush(bodyColor);
         painter.setPen(Qt::NoPen);
@@ -229,7 +214,7 @@ int SystemSceneWidget::findBodyAt(const QPointF& widgetPos) const {
 
     for (auto it = m_layout.constBegin(); it != m_layout.constEnd(); ++it) {
         const auto bodyIt = m_bodyMap.constFind(it.key());
-        if (bodyIt != m_bodyMap.constEnd() && OrbitClassifier::isBarycenterType(bodyIt->type)) {
+        if (bodyIt != m_bodyMap.constEnd() && bodyIt->bodyClass == CelestialBody::BodyClass::Barycenter) {
             continue;
         }
 

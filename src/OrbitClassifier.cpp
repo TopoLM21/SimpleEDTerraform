@@ -9,16 +9,18 @@ bool containsInsensitive(const QString& value, const QString& token) {
 }
 
 bool isStar(const CelestialBody& body) {
-    return containsInsensitive(body.type, QStringLiteral("Star"));
+    return body.bodyClass == CelestialBody::BodyClass::Star
+        || containsInsensitive(body.type, QStringLiteral("Star"));
 }
 
 bool isPlanet(const CelestialBody& body) {
-    return containsInsensitive(body.type, QStringLiteral("Planet"));
+    return body.bodyClass == CelestialBody::BodyClass::Planet
+        || containsInsensitive(body.type, QStringLiteral("Planet"));
 }
 
-
 bool isBarycenter(const CelestialBody& body) {
-    return OrbitClassifier::isBarycenterType(body.type);
+    return body.bodyClass == CelestialBody::BodyClass::Barycenter
+        || OrbitClassifier::isBarycenterType(body.type);
 }
 
 bool isNonStarBody(const CelestialBody& body) {

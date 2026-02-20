@@ -53,6 +53,24 @@ QString modeToText(const SystemRequestMode mode) {
 
 
 
+CelestialBody::BodyClass classifyBodyClassFromType(const QString& bodyType) {
+    if (OrbitClassifier::isBarycenterType(bodyType)) {
+        return CelestialBody::BodyClass::Barycenter;
+    }
+    if (bodyType.contains(QStringLiteral("Star"), Qt::CaseInsensitive)) {
+        return CelestialBody::BodyClass::Star;
+    }
+    if (bodyType.contains(QStringLiteral("Moon"), Qt::CaseInsensitive)) {
+        return CelestialBody::BodyClass::Moon;
+    }
+    if (bodyType.contains(QStringLiteral("Planet"), Qt::CaseInsensitive)
+        || bodyType.contains(QStringLiteral("world"), Qt::CaseInsensitive)
+        || bodyType.contains(QStringLiteral("giant"), Qt::CaseInsensitive)) {
+        return CelestialBody::BodyClass::Planet;
+    }
+    return CelestialBody::BodyClass::Unknown;
+}
+
 bool parseParentFromString(const QString& parentsText,
                            int* outParentId,
                            QString* outRelationType,
@@ -122,6 +140,7 @@ QVector<CelestialBody> parseEdsmBodies(const QJsonObject& rootObject) {
         body.id = bodyObj.value(QStringLiteral("bodyId")).toInt(-1);
         body.name = bodyObj.value(QStringLiteral("name")).toString();
         body.type = bodyObj.value(QStringLiteral("type")).toString();
+        body.bodyClass = classifyBodyClassFromType(body.type);
         body.distanceToArrivalLs = bodyObj.value(QStringLiteral("distanceToArrival")).toDouble(0.0);
         body.semiMajorAxisAu = bodyObj.value(QStringLiteral("semiMajorAxis")).toDouble(0.0);
 
@@ -375,6 +394,7 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
                                 QStringLiteral("subType"),
                                 QStringLiteral("sub_type"),
                                 QStringLiteral("bodyType")});
+        body.bodyClass = classifyBodyClassFromType(body.type);
         body.distanceToArrivalLs = readDouble(bodyObj,
                                               {QStringLiteral("distanceToArrival"),
                                                QStringLiteral("distance_to_arrival")});
@@ -434,76 +454,105 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
             }
         }
 
+        if (body.bodyClass == CelestialBody::BodyClass::Unknown) {
+            if (body.parentRelationType.contains(QStringLiteral("Planet"), Qt::CaseInsensitive)) {
+                body.bodyClass = CelestialBody::BodyClass::Moon;
+            } else if (body.parentRelationType.contains(QStringLiteral("Star"), Qt::CaseInsensitive)) {
+                body.bodyClass = CelestialBody::BodyClass::Planet;
+            }
+        }
+
         bodies.push_back(body);
     }
 
     return bodies;
 }
 
+CelestialBody::BodyClass classifyEdastroBodyClass(const QString& collectionKey,
+                                                 const QJsonObject& bodyObj,
+                                                 const QString& bodyType) {
+    const auto key = collectionKey.toLower();
+    if (key.contains(QStringLiteral("star"))) {
+        return CelestialBody::BodyClass::Star;
+    }
+    if (key.contains(QStringLiteral("planet"))) {
+        return CelestialBody::BodyClass::Planet;
+    }
+    if (key.contains(QStringLiteral("moon"))) {
+        return CelestialBody::BodyClass::Moon;
+    }
+    if (key.contains(QStringLiteral("bary"))) {
+        return CelestialBody::BodyClass::Barycenter;
+    }
+
+    if (OrbitClassifier::isBarycenterType(bodyType)) {
+        return CelestialBody::BodyClass::Barycenter;
+    }
+    if (bodyType.contains(QStringLiteral("Star"), Qt::CaseInsensitive)) {
+        return CelestialBody::BodyClass::Star;
+    }
+    if (bodyType.contains(QStringLiteral("Moon"), Qt::CaseInsensitive)) {
+        return CelestialBody::BodyClass::Moon;
+    }
+    if (bodyType.contains(QStringLiteral("Planet"), Qt::CaseInsensitive)
+        || bodyType.contains(QStringLiteral("world"), Qt::CaseInsensitive)
+        || bodyType.contains(QStringLiteral("giant"), Qt::CaseInsensitive)) {
+        return CelestialBody::BodyClass::Planet;
+    }
+
+    const int parentPlanetId = readInt(bodyObj,
+                                       {QStringLiteral("parentPlanetID"),
+                                        QStringLiteral("parentPlanetId"),
+                                        QStringLiteral("parent_planet_id")},
+                                       0);
+    if (parentPlanetId > 0) {
+        return CelestialBody::BodyClass::Moon;
+    }
+
+    return CelestialBody::BodyClass::Unknown;
+}
+
 QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObject) {
-    QJsonArray bodiesArray;
-    auto appendBodies = [&bodiesArray](const QJsonArray& part) {
+    QVector<QPair<QString, QJsonObject>> rawBodies;
+
+    auto appendBodies = [&rawBodies](const QString& key, const QJsonArray& part) {
         for (const auto& bodyValue : part) {
             if (bodyValue.isObject()) {
-                bodiesArray.push_back(bodyValue);
+                rawBodies.push_back({key, bodyValue.toObject()});
             }
         }
     };
 
     const QStringList edastroCollectionKeys = {
+        QStringLiteral("stars"),
+        QStringLiteral("planets"),
+        QStringLiteral("moons"),
+        QStringLiteral("barycentres"),
+        QStringLiteral("barycenters"),
+        QStringLiteral("belts"),
         QStringLiteral("bodies"),
         QStringLiteral("systemBodies"),
         QStringLiteral("system_bodies"),
-        QStringLiteral("body"),
-        QStringLiteral("stars"),
-        QStringLiteral("planets"),
-        QStringLiteral("belts"),
-        QStringLiteral("moons"),
-        QStringLiteral("barycentres"),
-        QStringLiteral("barycenters")
+        QStringLiteral("body")
     };
 
     for (const auto& key : edastroCollectionKeys) {
-        appendBodies(readArray(rootObject, {key}));
+        appendBodies(key, readArray(rootObject, {key}));
     }
 
-    if (bodiesArray.isEmpty()) {
+    if (rawBodies.isEmpty()) {
         const auto dataObject = rootObject.value(QStringLiteral("data")).toObject();
         if (!dataObject.isEmpty()) {
             for (const auto& key : edastroCollectionKeys) {
-                appendBodies(readArray(dataObject, {key}));
-            }
-        }
-    }
-
-    if (bodiesArray.isEmpty()) {
-        for (auto it = rootObject.constBegin(); it != rootObject.constEnd(); ++it) {
-            if (!it.value().isArray()) {
-                continue;
-            }
-
-            const auto candidate = it.value().toArray();
-            if (candidate.isEmpty() || !candidate.first().isObject()) {
-                continue;
-            }
-
-            const auto firstObject = candidate.first().toObject();
-            if (firstObject.contains(QStringLiteral("id")) || firstObject.contains(QStringLiteral("bodyId"))
-                || firstObject.contains(QStringLiteral("name"))) {
-                appendBodies(candidate);
+                appendBodies(key, readArray(dataObject, {key}));
             }
         }
     }
 
     QVector<CelestialBody> bodies;
-    bodies.reserve(bodiesArray.size());
+    bodies.reserve(rawBodies.size());
 
-    for (const auto& bodyValue : bodiesArray) {
-        if (!bodyValue.isObject()) {
-            continue;
-        }
-
-        const auto bodyObj = bodyValue.toObject();
+    for (const auto& [collectionKey, bodyObj] : rawBodies) {
         CelestialBody body;
 
         body.id = readInt(bodyObj, {QStringLiteral("bodyId"), QStringLiteral("id")});
@@ -517,10 +566,9 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
         body.distanceToArrivalLs = readDouble(bodyObj,
                                               {QStringLiteral("distanceToArrival"),
                                                QStringLiteral("distance_to_arrival"),
-                                               QStringLiteral("distanceToArrivalLs")});
+                                               QStringLiteral("distanceToArrivalLs"),
+                                               QStringLiteral("distanceToArrivalLS")});
 
-        // В EDAstro обычно semi-major axis приходит в световых секундах,
-        // для UI конвертируем в а.е. так же, как для Spansh.
         constexpr double lightSecondsPerAu = 499.0047838;
         const double semiMajorAxisLs = readDouble(bodyObj,
                                                   {QStringLiteral("semiMajorAxis"),
@@ -528,7 +576,8 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
                                                    QStringLiteral("semiMajorAxisLs")});
         body.semiMajorAxisAu = semiMajorAxisLs > 0.0 ? (semiMajorAxisLs / lightSecondsPerAu) : 0.0;
 
-        body.orbitsBarycenter = OrbitClassifier::isBarycenterType(body.type);
+        body.bodyClass = classifyEdastroBodyClass(collectionKey, bodyObj, body.type);
+        body.orbitsBarycenter = (body.bodyClass == CelestialBody::BodyClass::Barycenter);
 
         parseParentFromArray(bodyObj.value(QStringLiteral("parents")),
                              &body.parentId,
@@ -574,6 +623,14 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
                 if (body.parentRelationType.isEmpty()) {
                     body.parentRelationType = QStringLiteral("Star");
                 }
+            }
+        }
+
+        if (body.bodyClass == CelestialBody::BodyClass::Unknown) {
+            if (body.parentRelationType.contains(QStringLiteral("Planet"), Qt::CaseInsensitive)) {
+                body.bodyClass = CelestialBody::BodyClass::Moon;
+            } else if (body.parentRelationType.contains(QStringLiteral("Star"), Qt::CaseInsensitive)) {
+                body.bodyClass = CelestialBody::BodyClass::Planet;
             }
         }
 

@@ -84,28 +84,8 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_loadButton, &QPushButton::clicked, this, [this]() {
         const auto systemName = m_systemNameEdit->text().trimmed();
 
-        SystemRequestMode mode = SystemRequestMode::EdastroOnly;
-        QString requestStatus = QStringLiteral("Загрузка данных только из EDAstro...");
-
-        switch (m_sourceCombo->currentIndex()) {
-        case 1:
-            mode = SystemRequestMode::AutoMerge;
-            requestStatus = QStringLiteral("Загрузка данных: EDSM с fallback на Spansh...");
-            break;
-        case 2:
-            mode = SystemRequestMode::EdsmOnly;
-            requestStatus = QStringLiteral("Загрузка данных только из EDSM...");
-            break;
-        case 3:
-            mode = SystemRequestMode::SpanshOnly;
-            requestStatus = QStringLiteral("Загрузка данных только из Spansh...");
-            break;
-        default:
-            break;
-        }
-
-        m_statusLabel->setText(requestStatus);
-        m_apiClient.requestSystemBodies(systemName, mode);
+        m_statusLabel->setText(QStringLiteral("Загрузка данных только из EDAstro..."));
+        m_apiClient.requestSystemBodies(systemName, SystemRequestMode::EdastroOnly);
     });
 
     connect(&m_apiClient, &EdsmApiClient::systemBodiesReady, this, [this](const SystemBodiesResult& result) {
@@ -118,15 +98,6 @@ MainWindow::MainWindow(QWidget* parent)
                              .arg(dataSourceTitle(result.selectedSource))
                              .arg(m_currentBodies.size());
 
-        if (result.hadConflict) {
-            status += QStringLiteral(". Конфликт данных: выбран приоритет Spansh");
-        }
-
-        if (result.selectedSource == SystemDataSource::Merged) {
-            status += QStringLiteral(". EDSM=%1, Spansh=%2")
-                          .arg(result.hasEdsmData ? QStringLiteral("да") : QStringLiteral("нет"))
-                          .arg(result.hasSpanshData ? QStringLiteral("да") : QStringLiteral("нет"));
-        }
 
         m_statusLabel->setText(status);
         m_systemIdsWindow->setBodies(m_currentBodies);
@@ -161,7 +132,7 @@ MainWindow::MainWindow(QWidget* parent)
     });
 
     connect(&m_apiClient, &EdsmApiClient::requestFailed, this, [this](const QString& reason) {
-        m_statusLabel->setText(QStringLiteral("Ошибка запроса к EDSM/Spansh/EDAstro"));
+        m_statusLabel->setText(QStringLiteral("Ошибка запроса к EDAstro"));
         qDebug().noquote() << QStringLiteral("[API] Пользовательская ошибка: %1").arg(reason);
         QMessageBox::warning(this, QStringLiteral("System API"), reason);
     });
@@ -178,10 +149,8 @@ void MainWindow::setupUi() {
 
     auto* sourceTitle = new QLabel(QStringLiteral("Источник:"), central);
     m_sourceCombo = new QComboBox(central);
-    m_sourceCombo->addItem(QStringLiteral("Только EDAstro (по умолчанию)"));
-    m_sourceCombo->addItem(QStringLiteral("Авто (EDSM индекс → Spansh приоритет)"));
-    m_sourceCombo->addItem(QStringLiteral("Только EDSM"));
-    m_sourceCombo->addItem(QStringLiteral("Только Spansh"));
+    m_sourceCombo->addItem(QStringLiteral("Только EDAstro"));
+    m_sourceCombo->setEnabled(false);
 
     m_loadButton = new QPushButton(QStringLiteral("Загрузить"), central);
     m_showIdsButton = new QPushButton(QStringLiteral("ID системы"), central);
@@ -212,7 +181,7 @@ void MainWindow::setupUi() {
 
     setCentralWidget(central);
     resize(1200, 780);
-    setWindowTitle(QStringLiteral("SimpleEDTerraform — EDSM/Spansh/EDAstro System Viewer"));
+    setWindowTitle(QStringLiteral("SimpleEDTerraform — EDAstro System Viewer"));
 }
 
 void MainWindow::setBodyDetailsText(const QString& text) {
