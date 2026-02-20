@@ -1,5 +1,7 @@
 #include "SystemSceneWidget.h"
 
+#include <limits>
+
 #include <QMouseEvent>
 #include <QPainter>
 #include <QWheelEvent>
@@ -20,6 +22,8 @@ void SystemSceneWidget::setSystemData(const QString& systemName,
     m_roots = roots;
     m_zoom = 1.0;
     m_panOffset = QPointF(0.0, 0.0);
+    m_isDragging = false;
+    m_movedSincePress = false;
     m_orbitClassification = OrbitClassifier::classify(m_bodyMap);
     rebuildLayout();
 }
@@ -125,6 +129,8 @@ void SystemSceneWidget::resizeEvent(QResizeEvent* event) {
 void SystemSceneWidget::mousePressEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton) {
         m_isDragging = true;
+        m_movedSincePress = false;
+        m_pressPos = event->pos();
         m_lastMousePos = event->pos();
         setCursor(Qt::ClosedHandCursor);
         event->accept();
@@ -138,6 +144,9 @@ void SystemSceneWidget::mouseMoveEvent(QMouseEvent* event) {
     if (m_isDragging) {
         const QPoint delta = event->pos() - m_lastMousePos;
         m_lastMousePos = event->pos();
+        if (!m_movedSincePress && (event->pos() - m_pressPos).manhattanLength() > 3) {
+            m_movedSincePress = true;
+        }
         m_panOffset += QPointF(delta.x(), delta.y());
         update();
         event->accept();
@@ -149,8 +158,19 @@ void SystemSceneWidget::mouseMoveEvent(QMouseEvent* event) {
 
 void SystemSceneWidget::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() == Qt::LeftButton && m_isDragging) {
+        const bool treatAsClick = !m_movedSincePress;
         m_isDragging = false;
         unsetCursor();
+
+        if (treatAsClick) {
+            const int bodyId = findBodyAt(event->pos());
+            if (bodyId >= 0) {
+                emit bodyClicked(bodyId);
+            } else {
+                emit emptyAreaClicked();
+            }
+        }
+
         event->accept();
         return;
     }
@@ -185,4 +205,26 @@ void SystemSceneWidget::wheelEvent(QWheelEvent* event) {
 void SystemSceneWidget::rebuildLayout() {
     m_layout = SystemLayoutEngine::buildLayout(m_bodyMap, m_roots, rect());
     update();
+}
+
+int SystemSceneWidget::findBodyAt(const QPointF& widgetPos) const {
+    if (m_layout.isEmpty()) {
+        return -1;
+    }
+
+    const QPointF scenePos = (widgetPos - m_panOffset) / m_zoom;
+    int foundBodyId = -1;
+    double smallestDistance = std::numeric_limits<double>::max();
+
+    for (auto it = m_layout.constBegin(); it != m_layout.constEnd(); ++it) {
+        const QPointF delta = scenePos - it->position;
+        const double distanceSquared = delta.x() * delta.x() + delta.y() * delta.y();
+        const double radiusSquared = it->radius * it->radius;
+        if (distanceSquared <= radiusSquared && distanceSquared < smallestDistance) {
+            foundBodyId = it.key();
+            smallestDistance = distanceSquared;
+        }
+    }
+
+    return foundBodyId;
 }
