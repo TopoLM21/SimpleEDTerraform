@@ -25,6 +25,8 @@ QString sourceToText(const SystemDataSource source) {
         return QStringLiteral("EDSM");
     case SystemDataSource::Spansh:
         return QStringLiteral("Spansh");
+    case SystemDataSource::Edastro:
+        return QStringLiteral("EDAstro");
     case SystemDataSource::Merged:
         return QStringLiteral("EDSM+Spansh");
     }
@@ -40,6 +42,8 @@ QString modeToText(const SystemRequestMode mode) {
         return QStringLiteral("EdsmOnly");
     case SystemRequestMode::SpanshOnly:
         return QStringLiteral("SpanshOnly");
+    case SystemRequestMode::EdastroOnly:
+        return QStringLiteral("EdastroOnly");
     }
 
     return QStringLiteral("Unknown");
@@ -326,6 +330,75 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
     return bodies;
 }
 
+QVector<CelestialBody> parseEdastroBodies(const QJsonObject& rootObject) {
+    QJsonArray bodiesArray = readArray(rootObject,
+                                       {QStringLiteral("bodies"),
+                                        QStringLiteral("systemBodies"),
+                                        QStringLiteral("system_bodies"),
+                                        QStringLiteral("body")});
+
+    if (bodiesArray.isEmpty()) {
+        const auto dataObject = rootObject.value(QStringLiteral("data")).toObject();
+        if (!dataObject.isEmpty()) {
+            bodiesArray = readArray(dataObject,
+                                    {QStringLiteral("bodies"),
+                                     QStringLiteral("systemBodies"),
+                                     QStringLiteral("system_bodies"),
+                                     QStringLiteral("body")});
+        }
+    }
+
+    QVector<CelestialBody> bodies;
+    bodies.reserve(bodiesArray.size());
+
+    for (const auto& bodyValue : bodiesArray) {
+        if (!bodyValue.isObject()) {
+            continue;
+        }
+
+        const auto bodyObj = bodyValue.toObject();
+        CelestialBody body;
+
+        body.id = readInt(bodyObj, {QStringLiteral("bodyId"), QStringLiteral("id")});
+        body.name = readString(bodyObj, {QStringLiteral("name")});
+        body.type = readString(bodyObj,
+                               {QStringLiteral("type"),
+                                QStringLiteral("subType"),
+                                QStringLiteral("sub_type"),
+                                QStringLiteral("bodyType")});
+        body.distanceToArrivalLs = readDouble(bodyObj,
+                                              {QStringLiteral("distanceToArrival"),
+                                               QStringLiteral("distance_to_arrival")});
+
+        // В EDAstro обычно semi-major axis приходит в световых секундах,
+        // для UI конвертируем в а.е. так же, как для Spansh.
+        constexpr double lightSecondsPerAu = 499.0047838;
+        const double semiMajorAxisLs = readDouble(bodyObj,
+                                                  {QStringLiteral("semiMajorAxis"),
+                                                   QStringLiteral("semi_major_axis")});
+        body.semiMajorAxisAu = semiMajorAxisLs > 0.0 ? (semiMajorAxisLs / lightSecondsPerAu) : 0.0;
+
+        parseParentFromArray(bodyObj.value(QStringLiteral("parents")),
+                             &body.parentId,
+                             &body.parentRelationType,
+                             &body.orbitsBarycenter);
+
+        if (body.parentId < 0 && bodyObj.value(QStringLiteral("parent")).isObject()) {
+            const auto parentObject = bodyObj.value(QStringLiteral("parent")).toObject();
+            body.parentId = readInt(parentObject, {QStringLiteral("bodyId"), QStringLiteral("id")});
+            body.parentRelationType = readString(parentObject,
+                                                 {QStringLiteral("relationType"),
+                                                  QStringLiteral("relation_type"),
+                                                  QStringLiteral("type")});
+            body.orbitsBarycenter = body.parentRelationType.contains(QStringLiteral("Null"), Qt::CaseInsensitive);
+        }
+
+        bodies.push_back(body);
+    }
+
+    return bodies;
+}
+
 QVector<CelestialBody> mergeBodies(const QVector<CelestialBody>& edsmBodies,
                                    const QVector<CelestialBody>& spanshBodies,
                                    bool* outHadConflict) {
@@ -585,6 +658,82 @@ void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
     });
 }
 
+void EdsmApiClient::requestEdastroSystemBodies(const QString& systemName) {
+    const auto trimmedSystemName = systemName.trimmed();
+    if (trimmedSystemName.isEmpty()) {
+        emit requestFailed(QStringLiteral("Название системы не может быть пустым."));
+        return;
+    }
+
+    QUrl url(QStringLiteral("https://edastro.com/api/system/bodies"));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("systemName"), trimmedSystemName);
+    url.setQuery(query);
+
+    emit requestStateChanged(QStringLiteral("Запрос к EDAstro отправлен..."));
+    emit requestDebugInfo(QStringLiteral("[EDASTRO] Отправка запроса. systemName='%1', url=%2")
+                              .arg(trimmedSystemName, url.toString()));
+
+    auto* reply = m_networkManager->get(QNetworkRequest(url));
+    auto* timeoutTimer = new QTimer(reply);
+    timeoutTimer->setSingleShot(true);
+    timeoutTimer->setInterval(kRequestTimeoutMs);
+    connect(timeoutTimer, &QTimer::timeout, this, [reply]() {
+        if (!reply->isRunning()) {
+            return;
+        }
+
+        reply->setProperty("timedOut", true);
+        reply->abort();
+    });
+    timeoutTimer->start();
+
+    connect(reply, &QNetworkReply::finished, this, [this, reply, timeoutTimer, trimmedSystemName]() {
+        timeoutTimer->stop();
+        reply->deleteLater();
+
+        if (reply->property("timedOut").toBool()) {
+            emit requestFailed(QStringLiteral("Превышено время ожидания ответа EDAstro"));
+            return;
+        }
+
+        const int httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        emit requestDebugInfo(QStringLiteral("[EDASTRO] Ответ получен. status=%1, networkError=%2")
+                                  .arg(httpStatusCode)
+                                  .arg(reply->error()));
+
+        if (httpStatusCode == 404 || httpStatusCode == 422) {
+            emit requestFailed(QStringLiteral("Система не найдена в EDAstro"));
+            return;
+        }
+
+        if (reply->error() != QNetworkReply::NoError) {
+            emit requestFailed(reply->errorString());
+            return;
+        }
+
+        const auto payload = reply->readAll();
+        const auto document = QJsonDocument::fromJson(payload);
+        if (!document.isObject()) {
+            emit requestFailed(QStringLiteral("Ответ EDAstro имеет неверный формат."));
+            return;
+        }
+
+        const auto bodies = parseEdastroBodies(document.object());
+        if (bodies.isEmpty()) {
+            emit requestFailed(QStringLiteral("EDAstro вернул пустой список тел или неизвестный формат полей."));
+            return;
+        }
+
+        SystemBodiesResult result;
+        result.systemName = trimmedSystemName;
+        result.bodies = bodies;
+        result.selectedSource = SystemDataSource::Edastro;
+        result.hasEdastroData = true;
+        emit systemBodiesReady(result);
+    });
+}
+
 void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemRequestMode mode) {
     const auto trimmedSystemName = systemName.trimmed();
     if (trimmedSystemName.isEmpty()) {
@@ -594,6 +743,11 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemR
 
     if (mode == SystemRequestMode::SpanshOnly) {
         requestSpanshSystemBodies(trimmedSystemName);
+        return;
+    }
+
+    if (mode == SystemRequestMode::EdastroOnly) {
+        requestEdastroSystemBodies(trimmedSystemName);
         return;
     }
 
