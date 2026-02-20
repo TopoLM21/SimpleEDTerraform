@@ -10,6 +10,7 @@ struct BodyLayout {
     QPointF position;
     double radius = 6.0;
     double orbitRadius = 0.0;
+    double pxPerAu = 0.0;
 };
 
 class SystemLayoutEngine {

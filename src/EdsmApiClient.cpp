@@ -129,6 +129,8 @@ bool parseParentFromArray(const QJsonValue& parentsValue,
     return true;
 }
 
+double readPhysicalRadiusKm(const QJsonObject& object);
+
 QVector<CelestialBody> parseEdsmBodies(const QJsonObject& rootObject) {
     const auto bodiesArray = rootObject.value(QStringLiteral("bodies")).toArray();
     QVector<CelestialBody> bodies;
@@ -143,6 +145,7 @@ QVector<CelestialBody> parseEdsmBodies(const QJsonObject& rootObject) {
         body.bodyClass = classifyBodyClassFromType(body.type);
         body.distanceToArrivalLs = bodyObj.value(QStringLiteral("distanceToArrival")).toDouble(0.0);
         body.semiMajorAxisAu = bodyObj.value(QStringLiteral("semiMajorAxis")).toDouble(0.0);
+        body.physicalRadiusKm = readPhysicalRadiusKm(bodyObj);
 
         parseParentFromArray(bodyObj.value(QStringLiteral("parents")),
                              &body.parentId,
@@ -235,6 +238,46 @@ QJsonArray readArray(const QJsonObject& object, const QStringList& keys) {
     }
 
     return QJsonArray();
+}
+
+
+
+double readPhysicalRadiusKm(const QJsonObject& object) {
+    // Пробуем сразу несколько полей: разные API отдают радиус в разных единицах.
+    const double radiusKm = readDouble(object,
+                                       {QStringLiteral("radiusKm"),
+                                        QStringLiteral("radius_km")});
+    if (radiusKm > 0.0) {
+        return radiusKm;
+    }
+
+    // В части источников поле radius уже в километрах.
+    const double genericRadius = readDouble(object, {QStringLiteral("radius")});
+    if (genericRadius > 0.0) {
+        return genericRadius;
+    }
+
+    // Для полей earthRadius/earthRadii переводим радиус Земли в километры.
+    constexpr double earthRadiusKm = 6371.0;
+    const double earthRadii = readDouble(object,
+                                         {QStringLiteral("earthRadius"),
+                                          QStringLiteral("earthRadii"),
+                                          QStringLiteral("earth_radius")});
+    if (earthRadii > 0.0) {
+        return earthRadii * earthRadiusKm;
+    }
+
+    // Для солнечных радиусов используем экваториальный радиус Солнца.
+    constexpr double solarRadiusKm = 695700.0;
+    const double solarRadii = readDouble(object,
+                                         {QStringLiteral("solarRadius"),
+                                          QStringLiteral("solarRadii"),
+                                          QStringLiteral("solar_radius")});
+    if (solarRadii > 0.0) {
+        return solarRadii * solarRadiusKm;
+    }
+
+    return 0.0;
 }
 
 QString readMessageField(const QJsonObject& object) {
@@ -406,6 +449,7 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
                                                   {QStringLiteral("semiMajorAxis"),
                                                    QStringLiteral("semi_major_axis")});
         body.semiMajorAxisAu = semiMajorAxisLs > 0.0 ? (semiMajorAxisLs / lightSecondsPerAu) : 0.0;
+        body.physicalRadiusKm = readPhysicalRadiusKm(bodyObj);
 
         parseParentFromArray(bodyObj.value(QStringLiteral("parents")),
                              &body.parentId,
@@ -575,6 +619,7 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
                                                    QStringLiteral("semi_major_axis"),
                                                    QStringLiteral("semiMajorAxisLs")});
         body.semiMajorAxisAu = semiMajorAxisLs > 0.0 ? (semiMajorAxisLs / lightSecondsPerAu) : 0.0;
+        body.physicalRadiusKm = readPhysicalRadiusKm(bodyObj);
 
         body.bodyClass = classifyEdastroBodyClass(collectionKey, bodyObj, body.type);
         body.orbitsBarycenter = (body.bodyClass == CelestialBody::BodyClass::Barycenter);
