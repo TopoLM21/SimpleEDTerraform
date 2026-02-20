@@ -68,7 +68,7 @@ MainWindow::MainWindow(QWidget* parent)
                              .arg(bodyMap.size());
 
         if (result.hadConflict) {
-            status += QStringLiteral(". Конфликт данных: выбран приоритет EDSM");
+            status += QStringLiteral(". Конфликт данных: выбран приоритет Spansh");
         }
 
         if (result.selectedSource == SystemDataSource::Merged) {
@@ -106,7 +106,7 @@ void MainWindow::setupUi() {
 
     auto* sourceTitle = new QLabel(QStringLiteral("Источник:"), central);
     m_sourceCombo = new QComboBox(central);
-    m_sourceCombo->addItem(QStringLiteral("Авто (EDSM → Spansh fallback)"));
+    m_sourceCombo->addItem(QStringLiteral("Авто (EDSM индекс → Spansh приоритет)"));
     m_sourceCombo->addItem(QStringLiteral("Только EDSM"));
     m_sourceCombo->addItem(QStringLiteral("Только Spansh"));
 

@@ -1,6 +1,7 @@
 #include "EdsmApiClient.h"
 
 #include <QHash>
+#include <functional>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -161,6 +162,51 @@ QString readMessageField(const QJsonObject& object) {
     return QString();
 }
 
+QString readSystemIndexFromEdsmObject(const QJsonObject& object) {
+    for (const auto& key : {QStringLiteral("id64"), QStringLiteral("systemId64"), QStringLiteral("id")}) {
+        const auto value = object.value(key);
+        if (value.isDouble()) {
+            const auto numericValue = value.toVariant().toLongLong();
+            if (numericValue > 0) {
+                return QString::number(numericValue);
+            }
+        }
+
+        if (value.isString()) {
+            const auto textValue = value.toString().trimmed();
+            if (!textValue.isEmpty()) {
+                return textValue;
+            }
+        }
+    }
+
+    return QString();
+}
+
+QString parseEdsmSystemIndex(const QJsonDocument& document) {
+    if (document.isObject()) {
+        const auto rootObject = document.object();
+        auto index = readSystemIndexFromEdsmObject(rootObject);
+        if (!index.isEmpty()) {
+            return index;
+        }
+
+        index = readSystemIndexFromEdsmObject(rootObject.value(QStringLiteral("system")).toObject());
+        if (!index.isEmpty()) {
+            return index;
+        }
+    }
+
+    if (document.isArray()) {
+        const auto systems = document.array();
+        if (!systems.isEmpty() && systems.first().isObject()) {
+            return readSystemIndexFromEdsmObject(systems.first().toObject());
+        }
+    }
+
+    return QString();
+}
+
 QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
     QJsonArray bodiesArray = readArray(rootObject,
                                        {QStringLiteral("bodies"),
@@ -294,6 +340,10 @@ QVector<CelestialBody> mergeBodies(const QVector<CelestialBody>& edsmBodies,
         if ((!existing.name.isEmpty() && existing.name != body.name) || (!existing.type.isEmpty() && existing.type != body.type)) {
             *outHadConflict = true;
         }
+
+        // По требованиям используем Spansh как приоритетный источник,
+        // поэтому при совпадении идентификатора заменяем EDSM-запись.
+        mergedById.insert(body.id, body);
     }
 
     for (const auto& body : spanshBodies) {
@@ -322,6 +372,106 @@ EdsmApiClient::EdsmApiClient(QObject* parent)
     , m_networkManager(new QNetworkAccessManager(this)) {
 }
 
+void requestSpanshBodiesBySystemIndex(QNetworkAccessManager* networkManager,
+                                      QObject* context,
+                                      const QString& systemName,
+                                      const QString& systemIndex,
+                                      const std::function<void(const QVector<CelestialBody>&, const QString&)>& onFinished,
+                                      const std::function<void(const QString&)>& onDebugInfo,
+                                      const QString& modeLabel = QString()) {
+    QUrl url(QStringLiteral("https://spansh.co.uk/api/dump/%1").arg(QUrl::toPercentEncoding(systemIndex).constData()));
+    if (modeLabel.isEmpty()) {
+        onDebugInfo(QStringLiteral("[SPANSH] Отправка запроса. systemName='%1', systemIndex='%2', url=%3")
+                        .arg(systemName, systemIndex, url.toString()));
+    } else {
+        onDebugInfo(QStringLiteral("[SPANSH] Отправка запроса. mode=%1, systemName='%2', systemIndex='%3', url=%4")
+                        .arg(modeLabel, systemName, systemIndex, url.toString()));
+    }
+
+    auto* reply = networkManager->get(QNetworkRequest(url));
+    auto* timeoutTimer = new QTimer(reply);
+    timeoutTimer->setSingleShot(true);
+    timeoutTimer->setInterval(kRequestTimeoutMs);
+
+    QObject::connect(timeoutTimer, &QTimer::timeout, context, [reply]() {
+        if (!reply->isRunning()) {
+            return;
+        }
+
+        reply->setProperty("timedOut", true);
+        reply->abort();
+    });
+    timeoutTimer->start();
+
+    QObject::connect(reply, &QNetworkReply::finished, context, [reply, timeoutTimer, onFinished, onDebugInfo, modeLabel]() {
+        timeoutTimer->stop();
+        reply->deleteLater();
+
+        const int httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (modeLabel.isEmpty()) {
+            onDebugInfo(QStringLiteral("[SPANSH] Ответ получен. status=%1, networkError=%2")
+                            .arg(httpStatusCode)
+                            .arg(reply->error()));
+        } else {
+            onDebugInfo(QStringLiteral("[SPANSH] Ответ получен. mode=%1, status=%2, networkError=%3")
+                            .arg(modeLabel)
+                            .arg(httpStatusCode)
+                            .arg(reply->error()));
+        }
+
+        if (reply->property("timedOut").toBool()) {
+            onFinished({}, QStringLiteral("Превышено время ожидания ответа Spansh"));
+            return;
+        }
+
+        if (httpStatusCode == 404 || httpStatusCode == 422) {
+            onFinished({}, QStringLiteral("Система не найдена в Spansh"));
+            return;
+        }
+
+        if (reply->error() != QNetworkReply::NoError) {
+            onFinished({}, reply->errorString());
+            return;
+        }
+
+        const auto payload = reply->readAll();
+        const auto document = QJsonDocument::fromJson(payload);
+        if (!document.isObject()) {
+            onFinished({}, QStringLiteral("Ответ Spansh имеет неверный формат."));
+            return;
+        }
+
+        const auto rootObject = document.object();
+        if (modeLabel.isEmpty()) {
+            onDebugInfo(QStringLiteral("[SPANSH] Корневые ключи JSON: %1")
+                            .arg(rootObject.keys().join(QStringLiteral(", "))));
+        } else {
+            onDebugInfo(QStringLiteral("[SPANSH] Корневые ключи JSON. mode=%1, keys=%2")
+                            .arg(modeLabel, rootObject.keys().join(QStringLiteral(", "))));
+        }
+
+        auto bodies = parseSpanshBodies(rootObject);
+        if (modeLabel.isEmpty()) {
+            onDebugInfo(QStringLiteral("[SPANSH] Распарсено тел: %1")
+                            .arg(bodies.size()));
+        } else {
+            onDebugInfo(QStringLiteral("[SPANSH] Ответ обработан. mode=%1, bodies=%2")
+                            .arg(modeLabel)
+                            .arg(bodies.size()));
+        }
+
+        if (bodies.isEmpty()) {
+            const auto apiMessage = readMessageField(rootObject);
+            if (!apiMessage.isEmpty()) {
+                onFinished({}, apiMessage);
+                return;
+            }
+        }
+
+        onFinished(bodies, QString());
+    });
+}
+
 void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
     const auto trimmedSystemName = systemName.trimmed();
     if (trimmedSystemName.isEmpty()) {
@@ -329,13 +479,18 @@ void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
         return;
     }
 
-    QUrl url(QStringLiteral("https://spansh.co.uk/api/dump/%1").arg(QUrl::toPercentEncoding(trimmedSystemName).constData()));
-    emit requestStateChanged(QStringLiteral("Запрос к Spansh отправлен..."));
-    emit requestDebugInfo(QStringLiteral("[SPANSH] Отправка запроса. systemName='%1', url=%2")
-                              .arg(trimmedSystemName, url.toString()));
+    emit requestStateChanged(QStringLiteral("Получение индекса системы из EDSM для запроса к Spansh..."));
 
-    QNetworkRequest request(url);
-    auto* reply = m_networkManager->get(request);
+    QUrl edsmSystemUrl(QStringLiteral("https://www.edsm.net/api-v1/system"));
+    QUrlQuery edsmSystemQuery;
+    edsmSystemQuery.addQueryItem(QStringLiteral("systemName"), trimmedSystemName);
+    edsmSystemQuery.addQueryItem(QStringLiteral("showCoordinates"), QStringLiteral("0"));
+    edsmSystemUrl.setQuery(edsmSystemQuery);
+
+    emit requestDebugInfo(QStringLiteral("[EDSM] Запрос индекса системы. systemName='%1', url=%2")
+                              .arg(trimmedSystemName, edsmSystemUrl.toString()));
+
+    auto* reply = m_networkManager->get(QNetworkRequest(edsmSystemUrl));
 
     auto* timeoutTimer = new QTimer(reply);
     timeoutTimer->setSingleShot(true);
@@ -348,8 +503,8 @@ void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
 
         reply->setProperty("timedOut", true);
         reply->abort();
-        emit requestStateChanged(QStringLiteral("Истекло время ожидания ответа Spansh."));
-        emit requestFailed(QStringLiteral("Превышено время ожидания ответа Spansh"));
+        emit requestStateChanged(QStringLiteral("Истекло время ожидания ответа EDSM при запросе индекса."));
+        emit requestFailed(QStringLiteral("Превышено время ожидания ответа EDSM"));
     });
     timeoutTimer->start();
 
@@ -358,7 +513,7 @@ void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
         reply->deleteLater();
 
         const int httpStatusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        emit requestDebugInfo(QStringLiteral("[SPANSH] Ответ получен. status=%1, networkError=%2")
+        emit requestDebugInfo(QStringLiteral("[EDSM] Ответ на запрос индекса получен. status=%1, networkError=%2")
                                   .arg(httpStatusCode)
                                   .arg(reply->error()));
 
@@ -367,7 +522,7 @@ void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
         }
 
         if (httpStatusCode == 404 || httpStatusCode == 422) {
-            emit requestFailed(QStringLiteral("Система не найдена в Spansh"));
+            emit requestFailed(QStringLiteral("Система не найдена в EDSM"));
             return;
         }
 
@@ -378,33 +533,40 @@ void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
 
         const auto payload = reply->readAll();
         const auto document = QJsonDocument::fromJson(payload);
-        if (!document.isObject()) {
-            emit requestFailed(QStringLiteral("Ответ Spansh имеет неверный формат."));
+        if (!document.isObject() && !document.isArray()) {
+            emit requestFailed(QStringLiteral("Ответ EDSM при запросе индекса имеет неверный формат."));
             return;
         }
 
-        const auto rootObject = document.object();
-        emit requestDebugInfo(QStringLiteral("[SPANSH] Корневые ключи JSON: %1")
-                                  .arg(rootObject.keys().join(QStringLiteral(", "))));
-
-        SystemBodiesResult result;
-        result.systemName = trimmedSystemName;
-        result.bodies = parseSpanshBodies(rootObject);
-        result.selectedSource = SystemDataSource::Spansh;
-        result.hasSpanshData = !result.bodies.isEmpty();
-
-        emit requestDebugInfo(QStringLiteral("[SPANSH] Распарсено тел: %1")
-                                  .arg(result.bodies.size()));
-
-        if (result.bodies.isEmpty()) {
-            const auto apiMessage = readMessageField(rootObject);
-            if (!apiMessage.isEmpty()) {
-                emit requestFailed(apiMessage);
-                return;
-            }
+        const auto systemIndex = parseEdsmSystemIndex(document);
+        if (systemIndex.isEmpty()) {
+            emit requestFailed(QStringLiteral("EDSM не вернул индекс системы для запроса к Spansh."));
+            return;
         }
 
-        emit systemBodiesReady(result);
+        emit requestStateChanged(QStringLiteral("Индекс системы получен (%1). Запрос к Spansh отправлен...").arg(systemIndex));
+
+        requestSpanshBodiesBySystemIndex(m_networkManager,
+                                         this,
+                                         trimmedSystemName,
+                                         systemIndex,
+                                         [this, trimmedSystemName](const QVector<CelestialBody>& spanshBodies,
+                                                                   const QString& spanshError) {
+                                             if (!spanshError.isEmpty()) {
+                                                 emit requestFailed(spanshError);
+                                                 return;
+                                             }
+
+                                             SystemBodiesResult result;
+                                             result.systemName = trimmedSystemName;
+                                             result.bodies = spanshBodies;
+                                             result.selectedSource = SystemDataSource::Spansh;
+                                             result.hasSpanshData = !result.bodies.isEmpty();
+                                             emit systemBodiesReady(result);
+                                         },
+                                         [this](const QString& message) {
+                                             emit requestDebugInfo(message);
+                                         });
     });
 }
 
@@ -508,7 +670,7 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemR
     edsmUrl.setQuery(edsmQuery);
 
     emit requestStateChanged(autoMergeMode
-                                 ? QStringLiteral("Параллельные запросы к EDSM и Spansh отправлены...")
+                                 ? QStringLiteral("Запрос к EDSM отправлен. Для Spansh ожидается индекс системы из EDSM...")
                                  : QStringLiteral("Запрос к EDSM отправлен..."));
     emit requestDebugInfo(QStringLiteral("[EDSM] Отправка запроса. mode=%1, systemName='%2', url=%3")
                               .arg(modeToText(mode), trimmedSystemName, edsmUrl.toString()));
@@ -571,85 +733,106 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemR
         return;
     }
 
-    QUrl spanshUrl(QStringLiteral("https://spansh.co.uk/api/dump/%1").arg(QUrl::toPercentEncoding(trimmedSystemName).constData()));
-    emit requestDebugInfo(QStringLiteral("[SPANSH] Отправка запроса. mode=%1, systemName='%2', url=%3")
-                              .arg(modeToText(mode), trimmedSystemName, spanshUrl.toString()));
+    QUrl edsmSystemUrl(QStringLiteral("https://www.edsm.net/api-v1/system"));
+    QUrlQuery edsmSystemQuery;
+    edsmSystemQuery.addQueryItem(QStringLiteral("systemName"), trimmedSystemName);
+    edsmSystemQuery.addQueryItem(QStringLiteral("showCoordinates"), QStringLiteral("0"));
+    edsmSystemUrl.setQuery(edsmSystemQuery);
 
-    auto* spanshReply = m_networkManager->get(QNetworkRequest(spanshUrl));
-    auto* spanshTimeoutTimer = new QTimer(spanshReply);
-    spanshTimeoutTimer->setSingleShot(true);
-    spanshTimeoutTimer->setInterval(kRequestTimeoutMs);
-    connect(spanshTimeoutTimer, &QTimer::timeout, this, [this, spanshReply, mode, state]() {
-        if (!spanshReply->isRunning()) {
+    emit requestDebugInfo(QStringLiteral("[EDSM] Запрос индекса системы. mode=%1, systemName='%2', url=%3")
+                              .arg(modeToText(mode), trimmedSystemName, edsmSystemUrl.toString()));
+
+    auto* resolveReply = m_networkManager->get(QNetworkRequest(edsmSystemUrl));
+    auto* resolveTimeoutTimer = new QTimer(resolveReply);
+    resolveTimeoutTimer->setSingleShot(true);
+    resolveTimeoutTimer->setInterval(kRequestTimeoutMs);
+    connect(resolveTimeoutTimer, &QTimer::timeout, this, [resolveReply, state]() {
+        if (!resolveReply->isRunning()) {
             return;
         }
 
         state->spanshTimedOut = true;
-        spanshReply->setProperty("timedOut", true);
-        spanshReply->abort();
-        emit requestDebugInfo(QStringLiteral("[SPANSH] Таймаут запроса. mode=%1, url=%2")
-                                  .arg(modeToText(mode), spanshReply->url().toString()));
+        resolveReply->setProperty("timedOut", true);
+        resolveReply->abort();
     });
-    spanshTimeoutTimer->start();
+    resolveTimeoutTimer->start();
 
-    connect(spanshReply, &QNetworkReply::finished, this, [this, spanshReply, spanshTimeoutTimer, mode, state, finalizeRequest]() {
-        spanshTimeoutTimer->stop();
-        spanshReply->deleteLater();
-        state->spanshDone = true;
+    connect(resolveReply, &QNetworkReply::finished, this, [this,
+                                                            resolveReply,
+                                                            resolveTimeoutTimer,
+                                                            mode,
+                                                            trimmedSystemName,
+                                                            state,
+                                                            finalizeRequest]() {
+        resolveTimeoutTimer->stop();
+        resolveReply->deleteLater();
 
-        const int httpStatusCode = spanshReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        emit requestDebugInfo(QStringLiteral("[SPANSH] Ответ получен. mode=%1, status=%2, networkError=%3")
-                                  .arg(modeToText(mode))
-                                  .arg(httpStatusCode)
-                                  .arg(spanshReply->error()));
-
-        if (spanshReply->property("timedOut").toBool()) {
-            state->spanshError = QStringLiteral("Превышено время ожидания ответа Spansh");
-            finalizeRequest();
-            return;
-        }
-
-        if (httpStatusCode == 404 || httpStatusCode == 422) {
-            state->spanshError = QStringLiteral("Система не найдена в Spansh");
-            finalizeRequest();
-            return;
-        }
-
-        if (spanshReply->error() != QNetworkReply::NoError) {
-            state->spanshError = spanshReply->errorString();
-            emit requestDebugInfo(QStringLiteral("[SPANSH] Сетевая ошибка. mode=%1, error=%2")
-                                      .arg(modeToText(mode), state->spanshError));
-            finalizeRequest();
-            return;
-        }
-
-        const auto payload = spanshReply->readAll();
-        const auto document = QJsonDocument::fromJson(payload);
-        if (!document.isObject()) {
-            state->spanshError = QStringLiteral("Ответ Spansh имеет неверный формат.");
-            emit requestDebugInfo(QStringLiteral("[SPANSH] Ошибка парсинга. mode=%1")
+        if (resolveReply->property("timedOut").toBool()) {
+            state->spanshDone = true;
+            state->spanshError = QStringLiteral("Превышено время ожидания ответа EDSM при запросе индекса для Spansh");
+            emit requestDebugInfo(QStringLiteral("[EDSM] Таймаут запроса индекса. mode=%1")
                                       .arg(modeToText(mode)));
             finalizeRequest();
             return;
         }
 
-        const auto rootObject = document.object();
-        emit requestDebugInfo(QStringLiteral("[SPANSH] Корневые ключи JSON. mode=%1, keys=%2")
-                                  .arg(modeToText(mode), rootObject.keys().join(QStringLiteral(", "))));
-
-        state->spanshParsed = true;
-        state->spanshBodies = parseSpanshBodies(rootObject);
-        emit requestDebugInfo(QStringLiteral("[SPANSH] Ответ обработан. mode=%1, bodies=%2")
+        const int httpStatusCode = resolveReply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        emit requestDebugInfo(QStringLiteral("[EDSM] Ответ на запрос индекса получен. mode=%1, status=%2, networkError=%3")
                                   .arg(modeToText(mode))
-                                  .arg(state->spanshBodies.size()));
+                                  .arg(httpStatusCode)
+                                  .arg(resolveReply->error()));
 
-        if (state->spanshBodies.isEmpty()) {
-            const auto apiMessage = readMessageField(rootObject);
-            if (!apiMessage.isEmpty()) {
-                state->spanshError = apiMessage;
-            }
+        if (httpStatusCode == 404 || httpStatusCode == 422) {
+            state->spanshDone = true;
+            state->spanshError = QStringLiteral("Система не найдена в EDSM (индекс для Spansh не получен)");
+            finalizeRequest();
+            return;
         }
 
-        finalizeRequest();
+        if (resolveReply->error() != QNetworkReply::NoError) {
+            state->spanshDone = true;
+            state->spanshError = QStringLiteral("Не удалось получить индекс системы из EDSM: %1").arg(resolveReply->errorString());
+            finalizeRequest();
+            return;
+        }
+
+        const auto payload = resolveReply->readAll();
+        const auto document = QJsonDocument::fromJson(payload);
+        if (!document.isObject() && !document.isArray()) {
+            state->spanshDone = true;
+            state->spanshError = QStringLiteral("Ответ EDSM при запросе индекса имеет неверный формат.");
+            finalizeRequest();
+            return;
+        }
+
+        const auto systemIndex = parseEdsmSystemIndex(document);
+        if (systemIndex.isEmpty()) {
+            state->spanshDone = true;
+            state->spanshError = QStringLiteral("EDSM не вернул индекс системы для запроса к Spansh.");
+            finalizeRequest();
+            return;
+        }
+
+        requestSpanshBodiesBySystemIndex(m_networkManager,
+                                         this,
+                                         trimmedSystemName,
+                                         systemIndex,
+                                         [state, finalizeRequest](const QVector<CelestialBody>& spanshBodies,
+                                                                  const QString& spanshError) {
+                                             state->spanshDone = true;
+                                             state->spanshError = spanshError;
+                                             if (spanshError == QStringLiteral("Превышено время ожидания ответа Spansh")) {
+                                                 state->spanshTimedOut = true;
+                                             }
+                                             if (spanshError.isEmpty()) {
+                                                 state->spanshParsed = true;
+                                                 state->spanshBodies = spanshBodies;
+                                             }
+                                             finalizeRequest();
+                                         },
+                                         [this](const QString& message) {
+                                             emit requestDebugInfo(message);
+                                         },
+                                         modeToText(mode));
     });
 }
