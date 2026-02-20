@@ -330,7 +330,7 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
     return bodies;
 }
 
-QVector<CelestialBody> parseEdastroBodies(const QJsonObject& rootObject) {
+QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObject) {
     QJsonArray bodiesArray = readArray(rootObject,
                                        {QStringLiteral("bodies"),
                                         QStringLiteral("systemBodies"),
@@ -397,6 +397,50 @@ QVector<CelestialBody> parseEdastroBodies(const QJsonObject& rootObject) {
     }
 
     return bodies;
+}
+
+QVector<CelestialBody> parseEdastroBodies(const QJsonDocument& document) {
+    if (document.isObject()) {
+        const auto rootObject = document.object();
+
+        // /api/starsystem может вернуть данные как объект системы либо как контейнер с массивом систем.
+        if (rootObject.contains(QStringLiteral("name")) || rootObject.contains(QStringLiteral("bodies"))
+            || rootObject.contains(QStringLiteral("systemBodies"))) {
+            const auto directBodies = parseEdastroBodiesFromObject(rootObject);
+            if (!directBodies.isEmpty()) {
+                return directBodies;
+            }
+        }
+
+        for (auto it = rootObject.constBegin(); it != rootObject.constEnd(); ++it) {
+            if (!it.value().isArray()) {
+                continue;
+            }
+
+            const auto systemsArray = it.value().toArray();
+            if (systemsArray.isEmpty() || !systemsArray.first().isObject()) {
+                continue;
+            }
+
+            const auto candidateBodies = parseEdastroBodiesFromObject(systemsArray.first().toObject());
+            if (!candidateBodies.isEmpty()) {
+                return candidateBodies;
+            }
+        }
+
+        return {};
+    }
+
+    if (!document.isArray()) {
+        return {};
+    }
+
+    const auto systemsArray = document.array();
+    if (systemsArray.isEmpty() || !systemsArray.first().isObject()) {
+        return {};
+    }
+
+    return parseEdastroBodiesFromObject(systemsArray.first().toObject());
 }
 
 QVector<CelestialBody> mergeBodies(const QVector<CelestialBody>& edsmBodies,
@@ -665,9 +709,9 @@ void EdsmApiClient::requestEdastroSystemBodies(const QString& systemName) {
         return;
     }
 
-    QUrl url(QStringLiteral("https://edastro.com/api/system/bodies"));
+    QUrl url(QStringLiteral("https://edastro.com/api/starsystem"));
     QUrlQuery query;
-    query.addQueryItem(QStringLiteral("systemName"), trimmedSystemName);
+    query.addQueryItem(QStringLiteral("q"), trimmedSystemName);
     url.setQuery(query);
 
     emit requestStateChanged(QStringLiteral("Запрос к EDAstro отправлен..."));
@@ -714,12 +758,12 @@ void EdsmApiClient::requestEdastroSystemBodies(const QString& systemName) {
 
         const auto payload = reply->readAll();
         const auto document = QJsonDocument::fromJson(payload);
-        if (!document.isObject()) {
+        if (!document.isObject() && !document.isArray()) {
             emit requestFailed(QStringLiteral("Ответ EDAstro имеет неверный формат."));
             return;
         }
 
-        const auto bodies = parseEdastroBodies(document.object());
+        const auto bodies = parseEdastroBodies(document);
         if (bodies.isEmpty()) {
             emit requestFailed(QStringLiteral("EDAstro вернул пустой список тел или неизвестный формат полей."));
             return;
