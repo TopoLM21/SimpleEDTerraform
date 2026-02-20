@@ -6,6 +6,20 @@
 #include <QPainter>
 #include <QWheelEvent>
 
+namespace {
+bool isStarBody(const CelestialBody& body) {
+    return body.type.contains(QStringLiteral("Star"), Qt::CaseInsensitive);
+}
+
+bool isPlanetBody(const CelestialBody& body) {
+    return body.type.contains(QStringLiteral("Planet"), Qt::CaseInsensitive);
+}
+
+bool isMoonBody(const CelestialBody& body) {
+    return body.type.contains(QStringLiteral("Moon"), Qt::CaseInsensitive);
+}
+}
+
 
 SystemSceneWidget::SystemSceneWidget(QWidget* parent)
     : QWidget(parent) {
@@ -56,7 +70,8 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
 
     painter.setPen(QPen(QColor(70, 92, 130), 1));
     for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
-        if (!m_layout.contains(it.key()) || it->parentId < 0 || !m_layout.contains(it->parentId)) {
+        if (!m_layout.contains(it.key()) || it->parentId < 0 || !m_layout.contains(it->parentId)
+            || OrbitClassifier::isBarycenterType(it->type)) {
             continue;
         }
 
@@ -70,7 +85,7 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     }
 
     for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
-        if (!m_layout.contains(it.key())) {
+        if (!m_layout.contains(it.key()) || OrbitClassifier::isBarycenterType(it->type)) {
             continue;
         }
 
@@ -79,23 +94,19 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
 
         const QSet<BodyOrbitType> bodyTypes = m_orbitClassification.bodyTypes.value(it.key());
 
-        QColor bodyColor = QColor(245, 208, 96);
-        if (bodyTypes.contains(BodyOrbitType::BinaryPlanetPairBarycenter)) {
-            bodyColor = QColor(198, 115, 255);
-        } else if (bodyTypes.contains(BodyOrbitType::BinaryPlanetNonStarBarycenter)) {
-            bodyColor = QColor(255, 170, 90);
-        } else if (bodyTypes.contains(BodyOrbitType::BinaryNonStarBarycenter)) {
-            bodyColor = QColor(255, 138, 171);
-        } else if (bodyTypes.contains(BodyOrbitType::BinaryPlanetComponent)) {
+        QColor bodyColor = QColor(190, 210, 240);
+        if (isStarBody(*it)) {
+            bodyColor = QColor(255, 208, 96);
+        } else if (isPlanetBody(*it)) {
+            bodyColor = QColor(111, 200, 255);
+        } else if (isMoonBody(*it)) {
+            bodyColor = QColor(170, 170, 180);
+        }
+
+        if (bodyTypes.contains(BodyOrbitType::BinaryPlanetComponent)) {
             bodyColor = QColor(140, 255, 168);
         } else if (bodyTypes.contains(BodyOrbitType::CircumbinaryPlanet)) {
             bodyColor = QColor(126, 255, 200);
-        } else if (OrbitClassifier::isBarycenterType(it->type)) {
-            bodyColor = QColor(255, 120, 120);
-        } else if (it->type.contains(QStringLiteral("Planet"), Qt::CaseInsensitive)) {
-            bodyColor = QColor(111, 200, 255);
-        } else if (it->type.contains(QStringLiteral("Moon"), Qt::CaseInsensitive)) {
-            bodyColor = QColor(170, 170, 180);
         }
 
         painter.setBrush(bodyColor);
@@ -105,7 +116,7 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         QStringList labelParts;
         labelParts.push_back(it->name);
 
-        if (it->orbitsBarycenter) {
+        if (it->orbitsBarycenter && it->parentId >= 0 && m_bodyMap.contains(it->parentId)) {
             labelParts.push_back(QStringLiteral("вокруг барицентра"));
         }
 
@@ -217,6 +228,11 @@ int SystemSceneWidget::findBodyAt(const QPointF& widgetPos) const {
     double smallestDistance = std::numeric_limits<double>::max();
 
     for (auto it = m_layout.constBegin(); it != m_layout.constEnd(); ++it) {
+        const auto bodyIt = m_bodyMap.constFind(it.key());
+        if (bodyIt != m_bodyMap.constEnd() && OrbitClassifier::isBarycenterType(bodyIt->type)) {
+            continue;
+        }
+
         const QPointF delta = scenePos - it->position;
         const double distanceSquared = delta.x() * delta.x() + delta.y() * delta.y();
         const double radiusSquared = it->radius * it->radius;
