@@ -10,13 +10,15 @@ class QNetworkAccessManager;
 enum class SystemDataSource {
     Edsm,
     Spansh,
+    Edastro,
     Merged
 };
 
 enum class SystemRequestMode {
     AutoMerge,
     EdsmOnly,
-    SpanshOnly
+    SpanshOnly,
+    EdastroOnly
 };
 
 struct SystemBodiesResult {
@@ -25,6 +27,7 @@ struct SystemBodiesResult {
     SystemDataSource selectedSource = SystemDataSource::Edsm;
     bool hasEdsmData = false;
     bool hasSpanshData = false;
+    bool hasEdastroData = false;
     bool hadConflict = false;
 };
 
@@ -36,6 +39,7 @@ public:
     void requestSystemBodies(const QString& systemName,
                              SystemRequestMode mode = SystemRequestMode::AutoMerge);
     void requestSpanshSystemBodies(const QString& systemName);
+    void requestEdastroSystemBodies(const QString& systemName);
 
 signals:
     void systemBodiesReady(const SystemBodiesResult& result);

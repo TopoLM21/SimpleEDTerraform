@@ -24,6 +24,8 @@ QString dataSourceTitle(const SystemDataSource source) {
         return QStringLiteral("EDSM");
     case SystemDataSource::Spansh:
         return QStringLiteral("Spansh");
+    case SystemDataSource::Edastro:
+        return QStringLiteral("EDAstro");
     case SystemDataSource::Merged:
         return QStringLiteral("EDSM + Spansh");
     }
@@ -94,6 +96,10 @@ MainWindow::MainWindow(QWidget* parent)
             mode = SystemRequestMode::SpanshOnly;
             requestStatus = QStringLiteral("Загрузка данных только из Spansh...");
             break;
+        case 3:
+            mode = SystemRequestMode::EdastroOnly;
+            requestStatus = QStringLiteral("Загрузка данных только из EDAstro...");
+            break;
         default:
             break;
         }
@@ -155,7 +161,7 @@ MainWindow::MainWindow(QWidget* parent)
     });
 
     connect(&m_apiClient, &EdsmApiClient::requestFailed, this, [this](const QString& reason) {
-        m_statusLabel->setText(QStringLiteral("Ошибка запроса к EDSM/Spansh"));
+        m_statusLabel->setText(QStringLiteral("Ошибка запроса к EDSM/Spansh/EDAstro"));
         qDebug().noquote() << QStringLiteral("[API] Пользовательская ошибка: %1").arg(reason);
         QMessageBox::warning(this, QStringLiteral("System API"), reason);
     });
@@ -175,6 +181,7 @@ void MainWindow::setupUi() {
     m_sourceCombo->addItem(QStringLiteral("Авто (EDSM индекс → Spansh приоритет)"));
     m_sourceCombo->addItem(QStringLiteral("Только EDSM"));
     m_sourceCombo->addItem(QStringLiteral("Только Spansh"));
+    m_sourceCombo->addItem(QStringLiteral("Только EDAstro (API, барицентры)"));
 
     m_loadButton = new QPushButton(QStringLiteral("Загрузить"), central);
     m_showIdsButton = new QPushButton(QStringLiteral("ID системы"), central);
@@ -205,7 +212,7 @@ void MainWindow::setupUi() {
 
     setCentralWidget(central);
     resize(1200, 780);
-    setWindowTitle(QStringLiteral("SimpleEDTerraform — EDSM/Spansh System Viewer"));
+    setWindowTitle(QStringLiteral("SimpleEDTerraform — EDSM/Spansh/EDAstro System Viewer"));
 }
 
 void MainWindow::setBodyDetailsText(const QString& text) {
