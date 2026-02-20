@@ -1,5 +1,7 @@
 #include "EdsmApiClient.h"
 
+#include "OrbitClassifier.h"
+
 #include <QHash>
 #include <functional>
 #include <QJsonArray>
@@ -102,7 +104,18 @@ QVector<CelestialBody> parseEdsmBodies(const QJsonObject& rootObject) {
 int readInt(const QJsonObject& object, const QStringList& keys, const int defaultValue = -1) {
     for (const auto& key : keys) {
         if (object.contains(key)) {
-            return object.value(key).toInt(defaultValue);
+            const auto value = object.value(key);
+            if (value.isDouble()) {
+                return value.toInt(defaultValue);
+            }
+
+            if (value.isString()) {
+                bool ok = false;
+                const int parsed = value.toString().trimmed().toInt(&ok);
+                if (ok) {
+                    return parsed;
+                }
+            }
         }
     }
 
@@ -112,7 +125,18 @@ int readInt(const QJsonObject& object, const QStringList& keys, const int defaul
 double readDouble(const QJsonObject& object, const QStringList& keys, const double defaultValue = 0.0) {
     for (const auto& key : keys) {
         if (object.contains(key)) {
-            return object.value(key).toDouble(defaultValue);
+            const auto value = object.value(key);
+            if (value.isDouble()) {
+                return value.toDouble(defaultValue);
+            }
+
+            if (value.isString()) {
+                bool ok = false;
+                const double parsed = value.toString().trimmed().toDouble(&ok);
+                if (ok) {
+                    return parsed;
+                }
+            }
         }
     }
 
@@ -122,7 +146,26 @@ double readDouble(const QJsonObject& object, const QStringList& keys, const doub
 QString readString(const QJsonObject& object, const QStringList& keys) {
     for (const auto& key : keys) {
         if (object.contains(key)) {
-            return object.value(key).toString();
+            const auto value = object.value(key);
+            if (value.isString()) {
+                return value.toString();
+            }
+
+            if (value.isDouble()) {
+                return QString::number(value.toDouble());
+            }
+
+            if (value.isObject()) {
+                const auto nested = value.toObject();
+                const auto nestedString = readString(nested,
+                                                     {QStringLiteral("name"),
+                                                      QStringLiteral("type"),
+                                                      QStringLiteral("value"),
+                                                      QStringLiteral("label")});
+                if (!nestedString.isEmpty()) {
+                    return nestedString;
+                }
+            }
         }
     }
 
@@ -331,20 +374,57 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
 }
 
 QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObject) {
-    QJsonArray bodiesArray = readArray(rootObject,
-                                       {QStringLiteral("bodies"),
-                                        QStringLiteral("systemBodies"),
-                                        QStringLiteral("system_bodies"),
-                                        QStringLiteral("body")});
+    QJsonArray bodiesArray;
+    auto appendBodies = [&bodiesArray](const QJsonArray& part) {
+        for (const auto& bodyValue : part) {
+            if (bodyValue.isObject()) {
+                bodiesArray.push_back(bodyValue);
+            }
+        }
+    };
+
+    const QStringList edastroCollectionKeys = {
+        QStringLiteral("bodies"),
+        QStringLiteral("systemBodies"),
+        QStringLiteral("system_bodies"),
+        QStringLiteral("body"),
+        QStringLiteral("stars"),
+        QStringLiteral("planets"),
+        QStringLiteral("belts"),
+        QStringLiteral("moons"),
+        QStringLiteral("barycentres"),
+        QStringLiteral("barycenters")
+    };
+
+    for (const auto& key : edastroCollectionKeys) {
+        appendBodies(readArray(rootObject, {key}));
+    }
 
     if (bodiesArray.isEmpty()) {
         const auto dataObject = rootObject.value(QStringLiteral("data")).toObject();
         if (!dataObject.isEmpty()) {
-            bodiesArray = readArray(dataObject,
-                                    {QStringLiteral("bodies"),
-                                     QStringLiteral("systemBodies"),
-                                     QStringLiteral("system_bodies"),
-                                     QStringLiteral("body")});
+            for (const auto& key : edastroCollectionKeys) {
+                appendBodies(readArray(dataObject, {key}));
+            }
+        }
+    }
+
+    if (bodiesArray.isEmpty()) {
+        for (auto it = rootObject.constBegin(); it != rootObject.constEnd(); ++it) {
+            if (!it.value().isArray()) {
+                continue;
+            }
+
+            const auto candidate = it.value().toArray();
+            if (candidate.isEmpty() || !candidate.first().isObject()) {
+                continue;
+            }
+
+            const auto firstObject = candidate.first().toObject();
+            if (firstObject.contains(QStringLiteral("id")) || firstObject.contains(QStringLiteral("bodyId"))
+                || firstObject.contains(QStringLiteral("name"))) {
+                appendBodies(candidate);
+            }
         }
     }
 
@@ -365,18 +445,23 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
                                {QStringLiteral("type"),
                                 QStringLiteral("subType"),
                                 QStringLiteral("sub_type"),
-                                QStringLiteral("bodyType")});
+                                QStringLiteral("bodyType"),
+                                QStringLiteral("body_type")});
         body.distanceToArrivalLs = readDouble(bodyObj,
                                               {QStringLiteral("distanceToArrival"),
-                                               QStringLiteral("distance_to_arrival")});
+                                               QStringLiteral("distance_to_arrival"),
+                                               QStringLiteral("distanceToArrivalLs")});
 
         // В EDAstro обычно semi-major axis приходит в световых секундах,
         // для UI конвертируем в а.е. так же, как для Spansh.
         constexpr double lightSecondsPerAu = 499.0047838;
         const double semiMajorAxisLs = readDouble(bodyObj,
                                                   {QStringLiteral("semiMajorAxis"),
-                                                   QStringLiteral("semi_major_axis")});
+                                                   QStringLiteral("semi_major_axis"),
+                                                   QStringLiteral("semiMajorAxisLs")});
         body.semiMajorAxisAu = semiMajorAxisLs > 0.0 ? (semiMajorAxisLs / lightSecondsPerAu) : 0.0;
+
+        body.orbitsBarycenter = OrbitClassifier::isBarycenterType(body.type);
 
         parseParentFromArray(bodyObj.value(QStringLiteral("parents")),
                              &body.parentId,
