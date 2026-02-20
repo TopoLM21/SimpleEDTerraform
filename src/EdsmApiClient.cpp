@@ -499,6 +499,7 @@ void EdsmApiClient::requestSpanshSystemBodies(const QString& systemName) {
     QUrlQuery edsmSystemQuery;
     edsmSystemQuery.addQueryItem(QStringLiteral("systemName"), trimmedSystemName);
     edsmSystemQuery.addQueryItem(QStringLiteral("showCoordinates"), QStringLiteral("0"));
+    edsmSystemQuery.addQueryItem(QStringLiteral("showId"), QStringLiteral("1"));
     edsmSystemUrl.setQuery(edsmSystemQuery);
 
     emit requestDebugInfo(QStringLiteral("[EDSM] Запрос индекса системы. systemName='%1', url=%2")
@@ -751,6 +752,7 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemR
     QUrlQuery edsmSystemQuery;
     edsmSystemQuery.addQueryItem(QStringLiteral("systemName"), trimmedSystemName);
     edsmSystemQuery.addQueryItem(QStringLiteral("showCoordinates"), QStringLiteral("0"));
+    edsmSystemQuery.addQueryItem(QStringLiteral("showId"), QStringLiteral("1"));
     edsmSystemUrl.setQuery(edsmSystemQuery);
 
     emit requestDebugInfo(QStringLiteral("[EDSM] Запрос индекса системы. mode=%1, systemName='%2', url=%3")
