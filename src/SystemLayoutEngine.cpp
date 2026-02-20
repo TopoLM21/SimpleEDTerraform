@@ -162,19 +162,13 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
         });
 
         const double innerFallbackPx = qMax(8.0, fallbackDistancePx * 0.55);
-        double pairDistancePx = innerFallbackPx;
-        for (const int childId : keyChildren) {
-            const double orbitAu = orbitalDistanceAu(bodyMap[childId]);
-            const double scaledDistancePx = orbitAu > 0.0 ? (orbitAu * pxPerAu * 0.35) : innerFallbackPx;
-            pairDistancePx = qMax(pairDistancePx, scaledDistancePx);
-        }
-        pairDistancePx = qBound(innerFallbackPx * 0.6,
-                                pairDistancePx,
-                                qMax(innerFallbackPx * 1.4, fallbackDistancePx * 0.95));
-
-        double maxInnerOrbitRadiusPx = pairDistancePx;
+        double maxInnerOrbitRadiusPx = innerFallbackPx;
         for (int i = 0; i < keyChildren.size(); ++i) {
             const int childId = keyChildren[i];
+            const double orbitAu = orbitalDistanceAu(bodyMap[childId]);
+            // Для компонентов бинарной системы сохраняем общий масштаб в пикселях через pxPerAu,
+            // чтобы орбиты оставались пропорциональными полуосям из данных EDSM.
+            const double pairDistancePx = orbitAu > 0.0 ? (orbitAu * pxPerAu) : innerFallbackPx;
             const double childAngle = M_PI * static_cast<double>(i);
             const QPointF childPosition(parentPosition.x() + qCos(childAngle) * pairDistancePx,
                                         parentPosition.y() + qSin(childAngle) * pairDistancePx);
