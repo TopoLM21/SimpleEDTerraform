@@ -17,6 +17,10 @@ public:
                        const QHash<int, CelestialBody>& bodyMap,
                        const QVector<int>& roots);
 
+signals:
+    void bodyClicked(int bodyId);
+    void emptyAreaClicked();
+
 protected:
     void paintEvent(QPaintEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
@@ -27,6 +31,7 @@ protected:
 
 private:
     void rebuildLayout();
+    int findBodyAt(const QPointF& widgetPos) const;
 
     QString m_systemName;
     QHash<int, CelestialBody> m_bodyMap;
@@ -37,5 +42,7 @@ private:
     double m_zoom = 1.0;
     QPointF m_panOffset;
     bool m_isDragging = false;
+    bool m_movedSincePress = false;
     QPoint m_lastMousePos;
+    QPoint m_pressPos;
 };

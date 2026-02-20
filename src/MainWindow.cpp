@@ -7,6 +7,7 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QTextEdit>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -29,6 +30,25 @@ QString dataSourceTitle(const SystemDataSource source) {
 }
 
 } // namespace
+
+QString bodyDetailsText(const CelestialBody& body) {
+    QStringList lines;
+    lines << QStringLiteral("Название: %1").arg(body.name);
+    lines << QStringLiteral("Тип: %1").arg(body.type.isEmpty() ? QStringLiteral("—") : body.type);
+    lines << QStringLiteral("ID: %1").arg(body.id);
+    lines << QStringLiteral("Родитель ID: %1").arg(body.parentId >= 0 ? QString::number(body.parentId) : QStringLiteral("—"));
+
+    if (!body.parentRelationType.isEmpty()) {
+        lines << QStringLiteral("Связь с родителем: %1").arg(body.parentRelationType);
+    }
+
+    lines << QStringLiteral("До точки входа: %1 ls").arg(body.distanceToArrivalLs, 0, 'f', 2);
+    lines << QStringLiteral("Большая полуось: %1 AU").arg(body.semiMajorAxisAu, 0, 'f', 5);
+    lines << QStringLiteral("Детей: %1").arg(body.children.size());
+    lines << QStringLiteral("Орбита вокруг барицентра: %1").arg(body.orbitsBarycenter ? QStringLiteral("да") : QStringLiteral("нет"));
+
+    return lines.join('\n');
+}
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
@@ -58,14 +78,14 @@ MainWindow::MainWindow(QWidget* parent)
     });
 
     connect(&m_apiClient, &EdsmApiClient::systemBodiesReady, this, [this](const SystemBodiesResult& result) {
-        const auto bodyMap = SystemModelBuilder::buildBodyMap(result.bodies);
-        const auto roots = SystemModelBuilder::findRootBodies(bodyMap);
+        m_currentBodies = SystemModelBuilder::buildBodyMap(result.bodies);
+        const auto roots = SystemModelBuilder::findRootBodies(m_currentBodies);
 
-        m_sceneWidget->setSystemData(result.systemName, bodyMap, roots);
+        m_sceneWidget->setSystemData(result.systemName, m_currentBodies, roots);
 
         QString status = QStringLiteral("Источник: %1. Загружено тел: %2")
                              .arg(dataSourceTitle(result.selectedSource))
-                             .arg(bodyMap.size());
+                             .arg(m_currentBodies.size());
 
         if (result.hadConflict) {
             status += QStringLiteral(". Конфликт данных: выбран приоритет Spansh");
@@ -82,6 +102,19 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(&m_apiClient, &EdsmApiClient::requestStateChanged, this, [this](const QString& state) {
         m_statusLabel->setText(state);
+    });
+
+    connect(m_sceneWidget, &SystemSceneWidget::bodyClicked, this, [this](const int bodyId) {
+        if (!m_currentBodies.contains(bodyId)) {
+            setBodyDetailsText(QStringLiteral("Тело не найдено в текущих данных."));
+            return;
+        }
+
+        setBodyDetailsText(bodyDetailsText(m_currentBodies.value(bodyId)));
+    });
+
+    connect(m_sceneWidget, &SystemSceneWidget::emptyAreaClicked, this, [this]() {
+        setBodyDetailsText(QStringLiteral("Кликните по телу на карте, чтобы увидеть параметры."));
     });
 
     connect(&m_apiClient, &EdsmApiClient::requestDebugInfo, this, [](const QString& message) {
@@ -121,11 +154,27 @@ void MainWindow::setupUi() {
 
     m_sceneWidget = new SystemSceneWidget(central);
 
+    m_bodyDetailsPanel = new QTextEdit(central);
+    m_bodyDetailsPanel->setReadOnly(true);
+    m_bodyDetailsPanel->setMinimumWidth(280);
+    m_bodyDetailsPanel->setMaximumWidth(380);
+    setBodyDetailsText(QStringLiteral("Кликните по телу на карте, чтобы увидеть параметры."));
+
+    auto* contentLayout = new QHBoxLayout();
+    contentLayout->addWidget(m_bodyDetailsPanel);
+    contentLayout->addWidget(m_sceneWidget, 1);
+
     rootLayout->addLayout(topPanel);
     rootLayout->addWidget(m_statusLabel);
-    rootLayout->addWidget(m_sceneWidget, 1);
+    rootLayout->addLayout(contentLayout, 1);
 
     setCentralWidget(central);
     resize(1200, 780);
     setWindowTitle(QStringLiteral("SimpleEDTerraform — EDSM/Spansh System Viewer"));
+}
+
+void MainWindow::setBodyDetailsText(const QString& text) {
+    if (m_bodyDetailsPanel) {
+        m_bodyDetailsPanel->setPlainText(text);
+    }
 }
