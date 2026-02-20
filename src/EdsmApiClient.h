@@ -24,7 +24,7 @@ enum class SystemRequestMode {
 struct SystemBodiesResult {
     QString systemName;
     QVector<CelestialBody> bodies;
-    SystemDataSource selectedSource = SystemDataSource::Edsm;
+    SystemDataSource selectedSource = SystemDataSource::Edastro;
     bool hasEdsmData = false;
     bool hasSpanshData = false;
     bool hasEdastroData = false;
@@ -37,7 +37,7 @@ public:
     explicit EdsmApiClient(QObject* parent = nullptr);
 
     void requestSystemBodies(const QString& systemName,
-                             SystemRequestMode mode = SystemRequestMode::AutoMerge);
+                             SystemRequestMode mode = SystemRequestMode::EdastroOnly);
     void requestSpanshSystemBodies(const QString& systemName);
     void requestEdastroSystemBodies(const QString& systemName);
 

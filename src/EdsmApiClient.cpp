@@ -51,6 +51,41 @@ QString modeToText(const SystemRequestMode mode) {
     return QStringLiteral("Unknown");
 }
 
+
+
+bool parseParentFromString(const QString& parentsText,
+                           int* outParentId,
+                           QString* outRelationType,
+                           bool* outOrbitsBarycenter) {
+    const auto trimmed = parentsText.trimmed();
+    if (trimmed.isEmpty()) {
+        return false;
+    }
+
+    const auto relations = trimmed.split(';', Qt::SkipEmptyParts);
+    for (const auto& relationTextRaw : relations) {
+        const auto relationText = relationTextRaw.trimmed();
+        const int delimiterIndex = relationText.indexOf(':');
+        if (delimiterIndex <= 0 || delimiterIndex >= relationText.size() - 1) {
+            continue;
+        }
+
+        const auto relationType = relationText.left(delimiterIndex).trimmed();
+        bool ok = false;
+        const int relationId = relationText.mid(delimiterIndex + 1).trimmed().toInt(&ok);
+        if (!ok) {
+            continue;
+        }
+
+        *outRelationType = relationType;
+        *outParentId = relationId;
+        *outOrbitsBarycenter = relationType.contains(QStringLiteral("Null"), Qt::CaseInsensitive)
+                               || relationType.contains(QStringLiteral("Bary"), Qt::CaseInsensitive);
+        return true;
+    }
+
+    return false;
+}
 bool parseParentFromArray(const QJsonValue& parentsValue,
                           int* outParentId,
                           QString* outRelationType,
@@ -357,6 +392,13 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
                              &body.parentRelationType,
                              &body.orbitsBarycenter);
 
+        if (body.parentId < 0) {
+            parseParentFromString(readString(bodyObj, {QStringLiteral("parents")}),
+                                  &body.parentId,
+                                  &body.parentRelationType,
+                                  &body.orbitsBarycenter);
+        }
+
         if (body.parentId < 0 && bodyObj.value(QStringLiteral("parent")).isObject()) {
             const auto parentObject = bodyObj.value(QStringLiteral("parent")).toObject();
             body.parentId = readInt(parentObject, {QStringLiteral("bodyId"), QStringLiteral("id")});
@@ -365,6 +407,31 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
                                                   QStringLiteral("relation_type"),
                                                   QStringLiteral("type")});
             body.orbitsBarycenter = body.parentRelationType.contains(QStringLiteral("Null"), Qt::CaseInsensitive);
+        }
+
+        if (body.parentId < 0) {
+            const int fallbackParentPlanetId = readInt(bodyObj,
+                                                       {QStringLiteral("parentPlanetID"),
+                                                        QStringLiteral("parentPlanetId"),
+                                                        QStringLiteral("parent_planet_id")},
+                                                       0);
+            const int fallbackParentStarId = readInt(bodyObj,
+                                                     {QStringLiteral("parentStarID"),
+                                                      QStringLiteral("parentStarId"),
+                                                      QStringLiteral("parent_star_id")},
+                                                     0);
+
+            if (fallbackParentPlanetId > 0) {
+                body.parentId = fallbackParentPlanetId;
+                if (body.parentRelationType.isEmpty()) {
+                    body.parentRelationType = QStringLiteral("Planet");
+                }
+            } else if (fallbackParentStarId > 0) {
+                body.parentId = fallbackParentStarId;
+                if (body.parentRelationType.isEmpty()) {
+                    body.parentRelationType = QStringLiteral("Star");
+                }
+            }
         }
 
         bodies.push_back(body);
@@ -468,6 +535,13 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
                              &body.parentRelationType,
                              &body.orbitsBarycenter);
 
+        if (body.parentId < 0) {
+            parseParentFromString(readString(bodyObj, {QStringLiteral("parents")}),
+                                  &body.parentId,
+                                  &body.parentRelationType,
+                                  &body.orbitsBarycenter);
+        }
+
         if (body.parentId < 0 && bodyObj.value(QStringLiteral("parent")).isObject()) {
             const auto parentObject = bodyObj.value(QStringLiteral("parent")).toObject();
             body.parentId = readInt(parentObject, {QStringLiteral("bodyId"), QStringLiteral("id")});
@@ -476,6 +550,31 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
                                                   QStringLiteral("relation_type"),
                                                   QStringLiteral("type")});
             body.orbitsBarycenter = body.parentRelationType.contains(QStringLiteral("Null"), Qt::CaseInsensitive);
+        }
+
+        if (body.parentId < 0) {
+            const int fallbackParentPlanetId = readInt(bodyObj,
+                                                       {QStringLiteral("parentPlanetID"),
+                                                        QStringLiteral("parentPlanetId"),
+                                                        QStringLiteral("parent_planet_id")},
+                                                       0);
+            const int fallbackParentStarId = readInt(bodyObj,
+                                                     {QStringLiteral("parentStarID"),
+                                                      QStringLiteral("parentStarId"),
+                                                      QStringLiteral("parent_star_id")},
+                                                     0);
+
+            if (fallbackParentPlanetId > 0) {
+                body.parentId = fallbackParentPlanetId;
+                if (body.parentRelationType.isEmpty()) {
+                    body.parentRelationType = QStringLiteral("Planet");
+                }
+            } else if (fallbackParentStarId > 0) {
+                body.parentId = fallbackParentStarId;
+                if (body.parentRelationType.isEmpty()) {
+                    body.parentRelationType = QStringLiteral("Star");
+                }
+            }
         }
 
         bodies.push_back(body);

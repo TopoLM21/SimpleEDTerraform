@@ -84,21 +84,21 @@ MainWindow::MainWindow(QWidget* parent)
     connect(m_loadButton, &QPushButton::clicked, this, [this]() {
         const auto systemName = m_systemNameEdit->text().trimmed();
 
-        SystemRequestMode mode = SystemRequestMode::AutoMerge;
-        QString requestStatus = QStringLiteral("Загрузка данных: EDSM с fallback на Spansh...");
+        SystemRequestMode mode = SystemRequestMode::EdastroOnly;
+        QString requestStatus = QStringLiteral("Загрузка данных только из EDAstro...");
 
         switch (m_sourceCombo->currentIndex()) {
         case 1:
+            mode = SystemRequestMode::AutoMerge;
+            requestStatus = QStringLiteral("Загрузка данных: EDSM с fallback на Spansh...");
+            break;
+        case 2:
             mode = SystemRequestMode::EdsmOnly;
             requestStatus = QStringLiteral("Загрузка данных только из EDSM...");
             break;
-        case 2:
+        case 3:
             mode = SystemRequestMode::SpanshOnly;
             requestStatus = QStringLiteral("Загрузка данных только из Spansh...");
-            break;
-        case 3:
-            mode = SystemRequestMode::EdastroOnly;
-            requestStatus = QStringLiteral("Загрузка данных только из EDAstro...");
             break;
         default:
             break;
@@ -178,10 +178,10 @@ void MainWindow::setupUi() {
 
     auto* sourceTitle = new QLabel(QStringLiteral("Источник:"), central);
     m_sourceCombo = new QComboBox(central);
+    m_sourceCombo->addItem(QStringLiteral("Только EDAstro (по умолчанию)"));
     m_sourceCombo->addItem(QStringLiteral("Авто (EDSM индекс → Spansh приоритет)"));
     m_sourceCombo->addItem(QStringLiteral("Только EDSM"));
     m_sourceCombo->addItem(QStringLiteral("Только Spansh"));
-    m_sourceCombo->addItem(QStringLiteral("Только EDAstro (API, барицентры)"));
 
     m_loadButton = new QPushButton(QStringLiteral("Загрузить"), central);
     m_showIdsButton = new QPushButton(QStringLiteral("ID системы"), central);
