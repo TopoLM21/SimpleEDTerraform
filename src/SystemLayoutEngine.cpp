@@ -209,8 +209,8 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
             const double orbitAu = orbitalDistanceAu(child);
             // Для всех объектов, орбитирующих барицентр (включая планеты),
             // радиус орбиты берём напрямую из полуоси. Это сохраняет физический смысл схемы.
-            const double scaledDistancePx = orbitAu > 0.0 ? orbitAu * pxPerAu : fallbackDistancePx;
-            const double distancePx = qMax(fallbackDistancePx * 0.65, scaledDistancePx);
+            const double scaledDistancePx = orbitAu * pxPerAu;
+            const double distancePx = orbitAu > 0.0 ? scaledDistancePx : (fallbackDistancePx * 0.65);
 
             const double childAngle = (2.0 * M_PI * i) / qMax(1, outerChildren.size());
             const QPointF childPosition(parentPosition.x() + qCos(childAngle) * distancePx,
@@ -231,8 +231,8 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
 
         const auto& child = bodyMap[childId];
         const double orbitAu = orbitalDistanceAu(child);
-        const double scaledDistancePx = orbitAu > 0.0 ? orbitAu * pxPerAu : fallbackDistancePx;
-        const double distancePx = qMax(fallbackDistancePx, scaledDistancePx);
+        const double scaledDistancePx = orbitAu * pxPerAu;
+        const double distancePx = orbitAu > 0.0 ? scaledDistancePx : fallbackDistancePx;
 
         const double childAngle = (2.0 * M_PI * i) / qMax(1, sortedChildren.size());
         const QPointF childPosition(parentPosition.x() + qCos(childAngle) * distancePx,
