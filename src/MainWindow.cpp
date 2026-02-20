@@ -13,6 +13,7 @@
 
 #include "OrbitClassifier.h"
 #include "SystemModelBuilder.h"
+#include "SystemIdsWindow.h"
 #include "SystemSceneWidget.h"
 
 namespace {
@@ -76,6 +77,7 @@ QString bodyDetailsText(const CelestialBody& body, const QHash<int, CelestialBod
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
     setupUi();
+    m_systemIdsWindow = new SystemIdsWindow(this);
 
     connect(m_loadButton, &QPushButton::clicked, this, [this]() {
         const auto systemName = m_systemNameEdit->text().trimmed();
@@ -121,6 +123,14 @@ MainWindow::MainWindow(QWidget* parent)
         }
 
         m_statusLabel->setText(status);
+        m_systemIdsWindow->setBodies(m_currentBodies);
+    });
+
+    connect(m_showIdsButton, &QPushButton::clicked, this, [this]() {
+        m_systemIdsWindow->setBodies(m_currentBodies);
+        m_systemIdsWindow->show();
+        m_systemIdsWindow->raise();
+        m_systemIdsWindow->activateWindow();
     });
 
     connect(&m_apiClient, &EdsmApiClient::requestStateChanged, this, [this](const QString& state) {
@@ -167,6 +177,7 @@ void MainWindow::setupUi() {
     m_sourceCombo->addItem(QStringLiteral("Только Spansh"));
 
     m_loadButton = new QPushButton(QStringLiteral("Загрузить"), central);
+    m_showIdsButton = new QPushButton(QStringLiteral("ID системы"), central);
     m_statusLabel = new QLabel(QStringLiteral("Ожидание запроса"), central);
 
     topPanel->addWidget(systemNameTitle);
@@ -174,6 +185,7 @@ void MainWindow::setupUi() {
     topPanel->addWidget(sourceTitle);
     topPanel->addWidget(m_sourceCombo);
     topPanel->addWidget(m_loadButton);
+    topPanel->addWidget(m_showIdsButton);
 
     m_sceneWidget = new SystemSceneWidget(central);
 
