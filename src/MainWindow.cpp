@@ -11,6 +11,7 @@
 #include <QVBoxLayout>
 #include <QWidget>
 
+#include "OrbitClassifier.h"
 #include "SystemModelBuilder.h"
 #include "SystemSceneWidget.h"
 
@@ -31,12 +32,34 @@ QString dataSourceTitle(const SystemDataSource source) {
 
 } // namespace
 
-QString bodyDetailsText(const CelestialBody& body) {
+QString parentDetailsText(const CelestialBody& body, const QHash<int, CelestialBody>& bodyMap) {
+    if (body.parentId < 0) {
+        return QStringLiteral("Родитель: —");
+    }
+
+    const auto parentIt = bodyMap.constFind(body.parentId);
+    if (parentIt == bodyMap.constEnd()) {
+        return QStringLiteral("Родитель: ID %1").arg(body.parentId);
+    }
+
+    const CelestialBody& parent = parentIt.value();
+    QString parentLine = QStringLiteral("Родитель: %1 (ID %2)").arg(parent.name, QString::number(parent.id));
+
+    if (body.orbitsBarycenter && OrbitClassifier::isBarycenterType(parent.type)) {
+        // Для тел с орбитой вокруг барицентра parentId указывает именно на барицентр,
+        // который задаёт орбитальные параметры соответствующей пары.
+        parentLine += QStringLiteral(" — барицентр пары");
+    }
+
+    return parentLine;
+}
+
+QString bodyDetailsText(const CelestialBody& body, const QHash<int, CelestialBody>& bodyMap) {
     QStringList lines;
     lines << QStringLiteral("Название: %1").arg(body.name);
     lines << QStringLiteral("Тип: %1").arg(body.type.isEmpty() ? QStringLiteral("—") : body.type);
     lines << QStringLiteral("ID: %1").arg(body.id);
-    lines << QStringLiteral("Родитель ID: %1").arg(body.parentId >= 0 ? QString::number(body.parentId) : QStringLiteral("—"));
+    lines << parentDetailsText(body, bodyMap);
 
     if (!body.parentRelationType.isEmpty()) {
         lines << QStringLiteral("Связь с родителем: %1").arg(body.parentRelationType);
@@ -110,7 +133,7 @@ MainWindow::MainWindow(QWidget* parent)
             return;
         }
 
-        setBodyDetailsText(bodyDetailsText(m_currentBodies.value(bodyId)));
+        setBodyDetailsText(bodyDetailsText(m_currentBodies.value(bodyId), m_currentBodies));
     });
 
     connect(m_sceneWidget, &SystemSceneWidget::emptyAreaClicked, this, [this]() {
