@@ -19,6 +19,43 @@ double orbitalDistanceAu(const CelestialBody& body) {
 bool isStarBody(const CelestialBody& body) {
     return body.type.contains(QStringLiteral("Star"), Qt::CaseInsensitive);
 }
+
+bool isPlanetBody(const CelestialBody& body) {
+    return body.type.contains(QStringLiteral("Planet"), Qt::CaseInsensitive);
+}
+
+bool isMoonBody(const CelestialBody& body) {
+    return body.type.contains(QStringLiteral("Moon"), Qt::CaseInsensitive);
+}
+
+int bodyTypePriority(const CelestialBody& body) {
+    if (isStarBody(body)) {
+        return 0;
+    }
+    if (isPlanetBody(body)) {
+        return 1;
+    }
+    if (isMoonBody(body)) {
+        return 2;
+    }
+    return 3;
+}
+
+bool lessForStableLayout(const CelestialBody& lhs, const int lhsId, const CelestialBody& rhs, const int rhsId) {
+    const int lhsPriority = bodyTypePriority(lhs);
+    const int rhsPriority = bodyTypePriority(rhs);
+    if (lhsPriority != rhsPriority) {
+        return lhsPriority < rhsPriority;
+    }
+
+    const double lhsOrbitAu = orbitalDistanceAu(lhs);
+    const double rhsOrbitAu = orbitalDistanceAu(rhs);
+    if (!qFuzzyCompare(lhsOrbitAu + 1.0, rhsOrbitAu + 1.0)) {
+        return lhsOrbitAu < rhsOrbitAu;
+    }
+
+    return lhsId < rhsId;
+}
 }
 
 QHash<int, BodyLayout> SystemLayoutEngine::buildLayout(const QHash<int, CelestialBody>& bodyMap,
@@ -77,63 +114,86 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
 
     const auto parentPosition = layout[bodyId].position;
 
-    QVector<int> starChildren;
-    starChildren.reserve(body.children.size());
-    QVector<int> nonStarChildren;
-    nonStarChildren.reserve(body.children.size());
+    QVector<int> sortedChildren;
+    sortedChildren.reserve(body.children.size());
     for (const int childId : body.children) {
         const auto childIt = bodyMap.constFind(childId);
         if (childIt == bodyMap.constEnd()) {
             continue;
         }
 
-        if (isStarBody(childIt.value())) {
-            starChildren.push_back(childId);
-        } else {
-            nonStarChildren.push_back(childId);
+        sortedChildren.push_back(childId);
+    }
+
+    std::sort(sortedChildren.begin(), sortedChildren.end(), [&](const int lhs, const int rhs) {
+        return lessForStableLayout(bodyMap[lhs], lhs, bodyMap[rhs], rhs);
+    });
+
+    QVector<int> keyChildren;
+    keyChildren.reserve(2);
+    QVector<int> outerChildren;
+    outerChildren.reserve(sortedChildren.size());
+
+    if (OrbitClassifier::isBarycenterType(body.type) && sortedChildren.size() >= 2) {
+        // Для барицентра считаем ключевой бинарной парой два самых "внутренних" тела,
+        // а остальные дети автоматически становятся внешними circumbinary-орбитами.
+        QVector<int> byOrbit = sortedChildren;
+        std::sort(byOrbit.begin(), byOrbit.end(), [&](const int lhs, const int rhs) {
+            const double lhsOrbitAu = orbitalDistanceAu(bodyMap[lhs]);
+            const double rhsOrbitAu = orbitalDistanceAu(bodyMap[rhs]);
+            if (!qFuzzyCompare(lhsOrbitAu + 1.0, rhsOrbitAu + 1.0)) {
+                return lhsOrbitAu < rhsOrbitAu;
+            }
+            return lessForStableLayout(bodyMap[lhs], lhs, bodyMap[rhs], rhs);
+        });
+
+        keyChildren = {byOrbit[0], byOrbit[1]};
+        for (const int childId : sortedChildren) {
+            if (childId != keyChildren[0] && childId != keyChildren[1]) {
+                outerChildren.push_back(childId);
+            }
         }
     }
 
-    if (OrbitClassifier::isBarycenterType(body.type) && starChildren.size() == 2) {
-        // Для барицентра с двумя звёздами раскладываем внутреннюю пару отдельно от внешних circumbinary-орбит.
-        std::sort(starChildren.begin(), starChildren.end());
+    if (keyChildren.size() == 2) {
+        // Компоненты бинарной пары размещаем симметрично относительно барицентра.
+        std::sort(keyChildren.begin(), keyChildren.end(), [&](const int lhs, const int rhs) {
+            return lessForStableLayout(bodyMap[lhs], lhs, bodyMap[rhs], rhs);
+        });
 
         const double innerFallbackPx = qMax(8.0, fallbackDistancePx * 0.55);
-        double maxInnerOrbitRadiusPx = innerFallbackPx;
-        for (int i = 0; i < starChildren.size(); ++i) {
-            const int childId = starChildren[i];
-            const auto& child = bodyMap[childId];
-
-            const double orbitAu = orbitalDistanceAu(child);
+        double pairDistancePx = innerFallbackPx;
+        for (const int childId : keyChildren) {
+            const double orbitAu = orbitalDistanceAu(bodyMap[childId]);
             const double scaledDistancePx = orbitAu > 0.0 ? (orbitAu * pxPerAu * 0.35) : innerFallbackPx;
-            const double distancePx = qBound(innerFallbackPx * 0.6,
-                                             scaledDistancePx,
-                                             qMax(innerFallbackPx * 1.4, fallbackDistancePx * 0.95));
+            pairDistancePx = qMax(pairDistancePx, scaledDistancePx);
+        }
+        pairDistancePx = qBound(innerFallbackPx * 0.6,
+                                pairDistancePx,
+                                qMax(innerFallbackPx * 1.4, fallbackDistancePx * 0.95));
 
+        double maxInnerOrbitRadiusPx = pairDistancePx;
+        for (int i = 0; i < keyChildren.size(); ++i) {
+            const int childId = keyChildren[i];
             const double childAngle = M_PI * static_cast<double>(i);
-            const QPointF childPosition(parentPosition.x() + qCos(childAngle) * distancePx,
-                                        parentPosition.y() + qSin(childAngle) * distancePx);
+            const QPointF childPosition(parentPosition.x() + qCos(childAngle) * pairDistancePx,
+                                        parentPosition.y() + qSin(childAngle) * pairDistancePx);
 
-            layout.insert(childId, BodyLayout{childPosition, 6.0, distancePx});
-            maxInnerOrbitRadiusPx = qMax(maxInnerOrbitRadiusPx, distancePx);
+            layout.insert(childId, BodyLayout{childPosition, 6.0, pairDistancePx});
+            maxInnerOrbitRadiusPx = qMax(maxInnerOrbitRadiusPx, pairDistancePx);
             layoutChildrenRecursive(bodyMap, layout, childId, pxPerAu, innerFallbackPx * 0.8);
         }
 
-        std::sort(nonStarChildren.begin(), nonStarChildren.end(), [&](const int lhs, const int rhs) {
-            const double lhsOrbitAu = orbitalDistanceAu(bodyMap[lhs]);
-            const double rhsOrbitAu = orbitalDistanceAu(bodyMap[rhs]);
-            if (qFuzzyCompare(lhsOrbitAu + 1.0, rhsOrbitAu + 1.0)) {
-                return lhs < rhs;
-            }
-            return lhsOrbitAu < rhsOrbitAu;
+        std::sort(outerChildren.begin(), outerChildren.end(), [&](const int lhs, const int rhs) {
+            return lessForStableLayout(bodyMap[lhs], lhs, bodyMap[rhs], rhs);
         });
 
         const double outerStartPx = qMax(maxInnerOrbitRadiusPx + fallbackDistancePx * 0.9,
                                          fallbackDistancePx * 1.6);
         const double outerStepPx = qMax(12.0, fallbackDistancePx * 0.85);
 
-        for (int i = 0; i < nonStarChildren.size(); ++i) {
-            const int childId = nonStarChildren[i];
+        for (int i = 0; i < outerChildren.size(); ++i) {
+            const int childId = outerChildren[i];
             const auto& child = bodyMap[childId];
 
             const double orbitAu = orbitalDistanceAu(child);
@@ -141,7 +201,7 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
             const double separatedByClassPx = outerStartPx + outerStepPx * static_cast<double>(i);
             const double distancePx = qMax(separatedByClassPx, qMax(fallbackDistancePx, scaledDistancePx));
 
-            const double childAngle = (2.0 * M_PI * i) / qMax(1, nonStarChildren.size());
+            const double childAngle = (2.0 * M_PI * i) / qMax(1, outerChildren.size());
             const QPointF childPosition(parentPosition.x() + qCos(childAngle) * distancePx,
                                         parentPosition.y() + qSin(childAngle) * distancePx);
 
@@ -152,8 +212,8 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
         return;
     }
 
-    for (int i = 0; i < body.children.size(); ++i) {
-        const int childId = body.children[i];
+    for (int i = 0; i < sortedChildren.size(); ++i) {
+        const int childId = sortedChildren[i];
         if (!bodyMap.contains(childId)) {
             continue;
         }
@@ -163,7 +223,7 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
         const double scaledDistancePx = orbitAu > 0.0 ? orbitAu * pxPerAu : fallbackDistancePx;
         const double distancePx = qMax(fallbackDistancePx, scaledDistancePx);
 
-        const double childAngle = (2.0 * M_PI * i) / qMax(1, body.children.size());
+        const double childAngle = (2.0 * M_PI * i) / qMax(1, sortedChildren.size());
         const QPointF childPosition(parentPosition.x() + qCos(childAngle) * distancePx,
                                     parentPosition.y() + qSin(childAngle) * distancePx);
 
