@@ -78,7 +78,7 @@ QHash<int, BodyLayout> SystemLayoutEngine::buildLayout(const QHash<int, Celestia
     const double pxPerAu = maxOrbitAu > 0.0 ? (safeHalfSize / maxOrbitAu) : 50.0;
 
     if (roots.size() == 1) {
-        layout.insert(roots.first(), BodyLayout{center, 9.0, 0.0});
+        layout.insert(roots.first(), BodyLayout{center, 9.0, 0.0, pxPerAu});
         layoutChildrenRecursive(bodyMap, layout, roots.first(), pxPerAu, 24.0);
         return layout;
     }
@@ -91,7 +91,7 @@ QHash<int, BodyLayout> SystemLayoutEngine::buildLayout(const QHash<int, Celestia
         const QPointF position(center.x() + qCos(angle) * ringRadius,
                                center.y() + qSin(angle) * ringRadius);
 
-        layout.insert(rootId, BodyLayout{position, 8.0, 0.0});
+        layout.insert(rootId, BodyLayout{position, 8.0, 0.0, pxPerAu});
         layoutChildrenRecursive(bodyMap, layout, rootId, pxPerAu, 22.0);
     }
 
@@ -173,7 +173,7 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
             const QPointF childPosition(parentPosition.x() + qCos(childAngle) * pairDistancePx,
                                         parentPosition.y() + qSin(childAngle) * pairDistancePx);
 
-            layout.insert(childId, BodyLayout{childPosition, 6.0, pairDistancePx});
+            layout.insert(childId, BodyLayout{childPosition, 6.0, pairDistancePx, pxPerAu});
             maxInnerOrbitRadiusPx = qMax(maxInnerOrbitRadiusPx, pairDistancePx);
             layoutChildrenRecursive(bodyMap, layout, childId, pxPerAu, innerFallbackPx * 0.8);
         }
@@ -199,7 +199,7 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
             const QPointF childPosition(parentPosition.x() + qCos(childAngle) * distancePx,
                                         parentPosition.y() + qSin(childAngle) * distancePx);
 
-            layout.insert(childId, BodyLayout{childPosition, 6.0, distancePx});
+            layout.insert(childId, BodyLayout{childPosition, 6.0, distancePx, pxPerAu});
             layoutChildrenRecursive(bodyMap, layout, childId, pxPerAu, fallbackDistancePx * 0.85);
         }
 
@@ -221,7 +221,7 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
         const QPointF childPosition(parentPosition.x() + qCos(childAngle) * distancePx,
                                     parentPosition.y() + qSin(childAngle) * distancePx);
 
-        layout.insert(childId, BodyLayout{childPosition, 6.0, distancePx});
+        layout.insert(childId, BodyLayout{childPosition, 6.0, distancePx, pxPerAu});
         layoutChildrenRecursive(bodyMap, layout, childId, pxPerAu, fallbackDistancePx * 0.85);
     }
 }

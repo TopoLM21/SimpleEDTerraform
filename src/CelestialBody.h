@@ -19,6 +19,7 @@ struct CelestialBody {
     QString type;
     double distanceToArrivalLs = 0.0;
     double semiMajorAxisAu = 0.0;
+    double physicalRadiusKm = 0.0;
     bool orbitsBarycenter = false;
     BodyClass bodyClass = BodyClass::Unknown;
     QVector<int> children;

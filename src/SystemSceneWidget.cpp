@@ -82,13 +82,30 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     painter.translate(m_panOffset);
     painter.scale(m_zoom, m_zoom);
 
+    painter.setBrush(Qt::NoBrush);
+    painter.setPen(QPen(QColor(84, 111, 168, 150), 1.0 / m_zoom));
+    for (auto it = m_layout.constBegin(); it != m_layout.constEnd(); ++it) {
+        const auto bodyIt = m_bodyMap.constFind(it.key());
+        if (bodyIt == m_bodyMap.constEnd() || bodyIt->parentId < 0 || !m_layout.contains(bodyIt->parentId)) {
+            continue;
+        }
+
+        if (bodyIt->bodyClass == CelestialBody::BodyClass::Barycenter) {
+            continue;
+        }
+
+        const QPointF parentPos = m_layout.value(bodyIt->parentId).position;
+        painter.drawEllipse(parentPos, it->orbitRadius, it->orbitRadius);
+    }
+
     for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
         if (!m_layout.contains(it.key()) || it->bodyClass == CelestialBody::BodyClass::Barycenter) {
             continue;
         }
 
-        const auto point = m_layout[it.key()].position;
-        const auto radius = m_layout[it.key()].radius;
+        const BodyLayout bodyLayout = m_layout.value(it.key());
+        const QPointF point = bodyLayout.position;
+        const double radius = bodyDrawRadiusPx(*it, bodyLayout);
 
         const QSet<BodyOrbitType> bodyTypes = m_orbitClassification.bodyTypes.value(it.key());
 
@@ -198,6 +215,23 @@ void SystemSceneWidget::wheelEvent(QWheelEvent* event) {
     event->accept();
 }
 
+
+
+double SystemSceneWidget::bodyDrawRadiusPx(const CelestialBody& body, const BodyLayout& bodyLayout) const {
+    // Радиус на экране = физический радиус (км), преобразованный в масштаб текущей сцены.
+    // Делим на m_zoom, потому что дальше painter уже масштабирует сцену.
+    if (body.physicalRadiusKm > 0.0) {
+        constexpr double kmPerAu = 149597870.7;
+        const double radiusScenePx = (body.physicalRadiusKm / kmPerAu) * bodyLayout.pxPerAu;
+        const double minWidgetRadiusPx = 1.0;
+        const double maxWidgetRadiusPx = 30.0;
+        const double radiusWidgetPx = qBound(minWidgetRadiusPx, radiusScenePx * m_zoom, maxWidgetRadiusPx);
+        return radiusWidgetPx / m_zoom;
+    }
+
+    const double fallbackWidgetPx = qBound(1.0, bodyLayout.radius * m_zoom, 24.0);
+    return fallbackWidgetPx / m_zoom;
+}
 void SystemSceneWidget::rebuildLayout() {
     m_layout = SystemLayoutEngine::buildLayout(m_bodyMap, m_roots, rect());
     update();
@@ -220,7 +254,8 @@ int SystemSceneWidget::findBodyAt(const QPointF& widgetPos) const {
 
         const QPointF delta = scenePos - it->position;
         const double distanceSquared = delta.x() * delta.x() + delta.y() * delta.y();
-        const double radiusSquared = it->radius * it->radius;
+        const double drawRadius = bodyDrawRadiusPx(*bodyIt, *it);
+        const double radiusSquared = drawRadius * drawRadius;
         if (distanceSquared <= radiusSquared && distanceSquared < smallestDistance) {
             foundBodyId = it.key();
             smallestDistance = distanceSquared;

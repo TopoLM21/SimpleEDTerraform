@@ -32,6 +32,7 @@ protected:
 private:
     void rebuildLayout();
     int findBodyAt(const QPointF& widgetPos) const;
+    double bodyDrawRadiusPx(const CelestialBody& body, const BodyLayout& bodyLayout) const;
 
     QString m_systemName;
     QHash<int, CelestialBody> m_bodyMap;
