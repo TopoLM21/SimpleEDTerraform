@@ -47,6 +47,7 @@ private slots:
     void colHierarchyResolvesThroughNull4();
     void synthesizesMissingBarycenterFromNullParentRef();
     void buildsBarycenterParentFromMoonOnlyChain();
+    void parsesEdastroRootWithoutNameField();
 };
 
 void EdastroHierarchyTests::eadstroBarycenterResolvesToStar() {
@@ -143,6 +144,25 @@ void EdastroHierarchyTests::buildsBarycenterParentFromMoonOnlyChain() {
         return message.contains(QStringLiteral("Некорректная иерархия"));
     });
     QVERIFY2(!hasHierarchyError, "Hierarchy should reach Star:* or Null:0 for all bodies");
+}
+
+void EdastroHierarchyTests::parsesEdastroRootWithoutNameField() {
+    QJsonObject root;
+    root.insert(QStringLiteral("stars"),
+                QJsonArray{QJsonObject{{QStringLiteral("id"), 0},
+                                       {QStringLiteral("name"), QStringLiteral("Primary")},
+                                       {QStringLiteral("type"), QStringLiteral("Star")}}});
+
+    QStringList diagnostics;
+    const auto bodies = parseEdastroBodiesForTests(QJsonDocument(root),
+                                                   QStringLiteral("Root without name"),
+                                                   [&diagnostics](const QString& message) {
+                                                       diagnostics.push_back(message);
+                                                   });
+
+    QVERIFY2(!bodies.isEmpty(), "Expected parser to accept root with direct stars/planets collections even without name");
+    const auto map = toMap(bodies);
+    QVERIFY2(map.contains(0), "Expected root star body id=0");
 }
 
 void EdastroHierarchyTests::synthesizesMissingBarycenterFromNullParentRef() {
