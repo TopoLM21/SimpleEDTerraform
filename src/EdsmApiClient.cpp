@@ -1384,9 +1384,16 @@ QVector<CelestialBody> parseEdastroBodies(const QJsonDocument& document,
     if (document.isObject()) {
         const auto rootObject = document.object();
 
+        const bool hasDirectEdastroCollections = rootObject.contains(QStringLiteral("stars"))
+                                                 || rootObject.contains(QStringLiteral("planets"))
+                                                 || rootObject.contains(QStringLiteral("moons"))
+                                                 || rootObject.contains(QStringLiteral("barycentres"))
+                                                 || rootObject.contains(QStringLiteral("barycenters"))
+                                                 || rootObject.contains(QStringLiteral("belts"));
+
         // /api/starsystem может вернуть данные как объект системы либо как контейнер с массивом систем.
         if (rootObject.contains(QStringLiteral("name")) || rootObject.contains(QStringLiteral("bodies"))
-            || rootObject.contains(QStringLiteral("systemBodies"))) {
+            || rootObject.contains(QStringLiteral("systemBodies")) || hasDirectEdastroCollections) {
             const auto parsedSystemName = readString(rootObject, {QStringLiteral("name")});
             const auto directBodies = parseEdastroBodiesFromObject(rootObject,
                                                                    parsedSystemName.isEmpty() ? defaultSystemName : parsedSystemName,
