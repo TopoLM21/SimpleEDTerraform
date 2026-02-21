@@ -1,5 +1,6 @@
 #include "SystemSceneWidget.h"
 
+#include <cmath>
 #include <limits>
 
 #include <QMouseEvent>
@@ -98,6 +99,13 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         painter.drawEllipse(parentPos, it->orbitRadius, it->orbitRadius);
     }
 
+    struct BodyLabel {
+        QPointF widgetPos;
+        QString text;
+    };
+    QVector<BodyLabel> bodyLabels;
+    bodyLabels.reserve(m_bodyMap.size());
+
     for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
         if (!m_layout.contains(it.key()) || it->bodyClass == CelestialBody::BodyClass::Barycenter) {
             continue;
@@ -127,11 +135,17 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
             labelParts.push_back(typeLabels.join(QStringLiteral(", ")));
         }
 
-        painter.setPen(QColor(220, 230, 245));
-        painter.drawText(point + QPointF(radius + 4.0, -radius - 2.0), labelParts.join(QStringLiteral(" | ")));
+        const QPointF labelScenePos = point + QPointF(radius + 4.0 / m_zoom, -radius - 2.0 / m_zoom);
+        const QPointF labelWidgetPos = labelScenePos * m_zoom + m_panOffset;
+        bodyLabels.push_back({labelWidgetPos, labelParts.join(QStringLiteral(" | "))});
     }
 
     painter.restore();
+
+    painter.setPen(QColor(220, 230, 245));
+    for (const BodyLabel& bodyLabel : bodyLabels) {
+        painter.drawText(bodyLabel.widgetPos, bodyLabel.text);
+    }
 }
 
 void SystemSceneWidget::resizeEvent(QResizeEvent* event) {
@@ -199,8 +213,8 @@ void SystemSceneWidget::wheelEvent(QWheelEvent* event) {
     }
 
     const double step = numDegrees.y() / 15.0;
-    const double factor = 1.0 + step * 0.1;
-    const double newZoom = qBound(0.2, m_zoom * factor, 10.0);
+    const double factor = std::pow(1.15, step);
+    const double newZoom = qBound(0.05, m_zoom * factor, 40.0);
     if (qFuzzyCompare(newZoom, m_zoom)) {
         return;
     }
