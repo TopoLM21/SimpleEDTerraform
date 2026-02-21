@@ -3,6 +3,8 @@
 #include <cmath>
 #include <limits>
 
+#include <QtGlobal>
+
 #include <QMouseEvent>
 #include <QPainter>
 #include <QWheelEvent>
@@ -90,8 +92,16 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     painter.setPen(QColor(148, 173, 230));
     painter.drawText(20, 50, systemTypesLine);
 
+    const double kmPerPixel = currentKmPerPixel();
+    painter.setPen(QColor(126, 155, 220));
+    if (kmPerPixel > 0.0) {
+        painter.drawText(20, 70, QStringLiteral("Масштаб: 1 px = %1 км").arg(kmPerPixel, 0, "g", 6));
+    } else {
+        painter.drawText(20, 70, QStringLiteral("Масштаб: недостаточно данных"));
+    }
+
     if (m_bodyMap.isEmpty() || m_layout.isEmpty()) {
-        painter.drawText(20, 75, QStringLiteral("Нет данных для отображения."));
+        painter.drawText(20, 90, QStringLiteral("Нет данных для отображения."));
         return;
     }
 
@@ -248,45 +258,37 @@ void SystemSceneWidget::wheelEvent(QWheelEvent* event) {
 
 
 double SystemSceneWidget::bodyDrawRadiusPx(const CelestialBody& body, const BodyLayout& bodyLayout) const {
-    // На максимальном приближении ширина окна интерпретируется как 10 000 км.
-    // Тогда физический диаметр тел становится строго относительным в масштабе.
-    constexpr double referenceScreenWidthKm = 10000.0;
-    const double pxPerKmAtMaxZoom = width() / referenceScreenWidthKm;
+    const double minWidgetRadiusPx = minimumBodyDiameterPx(body.bodyClass) / 2.0;
 
-    if (body.physicalRadiusKm > 0.0) {
-        const double physicalRadiusWidgetPxAtMaxZoom = body.physicalRadiusKm * pxPerKmAtMaxZoom;
-        const double progress = zoomProgress();
+    if (body.physicalRadiusKm > 0.0 && bodyLayout.pxPerAu > 0.0) {
+        constexpr double kmPerAu = 149597870.7;
+        // Текущий «истинный» масштаб: сколько экранных пикселей приходится на 1 км.
+        const double physicalRadiusWidgetPx = body.physicalRadiusKm * (bodyLayout.pxPerAu * m_zoom / kmPerAu);
 
-        // На дальних масштабах сильно сжимаем размеры, но оставляем различия между типами тел.
-        const double reducedRadiusWidgetPx = std::pow(qMax(physicalRadiusWidgetPxAtMaxZoom, 0.05), 0.35);
-        const double blendedRadiusWidgetPx = reducedRadiusWidgetPx * (1.0 - progress)
-            + physicalRadiusWidgetPxAtMaxZoom * progress;
-
-        // Фиксируем минимальный диаметр в пикселях, пока «истинный» размер
-        // не станет больше этого порога при приближении.
-        const double minWidgetRadiusPx = minimumBodyDiameterPx(body.bodyClass) / 2.0;
-        const double maxWidgetRadiusPx = 170.0;
-        return qBound(minWidgetRadiusPx, blendedRadiusWidgetPx, maxWidgetRadiusPx) / m_zoom;
+        // На сильном отдалении фиксируем минимальный диаметр.
+        // Как только физический размер в пикселях становится больше минимума,
+        // объект растет строго по реальному масштабу.
+        const double widgetRadiusPx = qMax(minWidgetRadiusPx, physicalRadiusWidgetPx);
+        constexpr double maxWidgetRadiusPx = 170.0;
+        return qMin(widgetRadiusPx, maxWidgetRadiusPx) / m_zoom;
     }
 
-    const double fallbackWidgetPx = qBound(1.0, bodyLayout.radius * m_zoom, 14.0);
+    const double fallbackWidgetPx = qBound(minWidgetRadiusPx, bodyLayout.radius * m_zoom, 14.0);
     return fallbackWidgetPx / m_zoom;
 }
 
+double SystemSceneWidget::currentKmPerPixel() const {
+    if (m_layout.isEmpty() || m_zoom <= 0.0) {
+        return 0.0;
+    }
 
-double SystemSceneWidget::zoomProgress() const {
-    // Плавный переход: только у верхней границы масштаб приближается к «истинному» физическому.
-    // Нормализация по log нужна, чтобы шаги колесика воспринимались равномерно.
-    constexpr double minZoom = 0.02;
-    constexpr double maxZoom = 400.0;
+    const auto firstLayout = m_layout.constBegin().value();
+    if (firstLayout.pxPerAu <= 0.0) {
+        return 0.0;
+    }
 
-    const double logMin = std::log(minZoom);
-    const double logMax = std::log(maxZoom);
-    const double logCurrent = std::log(qBound(minZoom, m_zoom, maxZoom));
-    const double normalized = (logCurrent - logMin) / (logMax - logMin);
-
-    // «Истинный» масштаб включается только при действительно максимальном приближении.
-    return std::pow(qBound(0.0, normalized, 1.0), 3.5);
+    constexpr double kmPerAu = 149597870.7;
+    return kmPerAu / (firstLayout.pxPerAu * m_zoom);
 }
 void SystemSceneWidget::rebuildLayout() {
     m_layout = SystemLayoutEngine::buildLayout(m_bodyMap, m_roots, rect());
