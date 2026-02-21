@@ -33,6 +33,22 @@ QColor bodyColorForClass(const CelestialBody::BodyClass bodyClass, const QSet<Bo
 
     return bodyColor;
 }
+
+double minimumBodyDiameterPx(const CelestialBody::BodyClass bodyClass) {
+    switch (bodyClass) {
+    case CelestialBody::BodyClass::Star:
+        return 15.0;
+    case CelestialBody::BodyClass::Planet:
+        return 10.0;
+    case CelestialBody::BodyClass::Moon:
+        return 5.0;
+    case CelestialBody::BodyClass::Barycenter:
+    case CelestialBody::BodyClass::Unknown:
+        return 4.0;
+    }
+
+    return 4.0;
+}
 }
 
 
@@ -246,8 +262,9 @@ double SystemSceneWidget::bodyDrawRadiusPx(const CelestialBody& body, const Body
         const double blendedRadiusWidgetPx = reducedRadiusWidgetPx * (1.0 - progress)
             + physicalRadiusWidgetPxAtMaxZoom * progress;
 
-        // Небольшие, но различимые размеры на обычном отдалении.
-        const double minWidgetRadiusPx = 1.1;
+        // Фиксируем минимальный диаметр в пикселях, пока «истинный» размер
+        // не станет больше этого порога при приближении.
+        const double minWidgetRadiusPx = minimumBodyDiameterPx(body.bodyClass) / 2.0;
         const double maxWidgetRadiusPx = 170.0;
         return qBound(minWidgetRadiusPx, blendedRadiusWidgetPx, maxWidgetRadiusPx) / m_zoom;
     }
