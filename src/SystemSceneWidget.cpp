@@ -95,7 +95,7 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     const double kmPerPixel = currentKmPerPixel();
     painter.setPen(QColor(126, 155, 220));
     if (kmPerPixel > 0.0) {
-        painter.drawText(20, 70, QStringLiteral("Масштаб: 1 px = %1 км").arg(kmPerPixel, 0, "g", 6));
+        painter.drawText(20, 70, QStringLiteral("Масштаб: 1 px = %1 км").arg(kmPerPixel, 0, 'g', 6));
     } else {
         painter.drawText(20, 70, QStringLiteral("Масштаб: недостаточно данных"));
     }
