@@ -36,9 +36,23 @@ protected:
     void wheelEvent(QWheelEvent* event) override;
 
 private:
+    enum class SizeSource {
+        Min,
+        Physical,
+        MaxClamp
+    };
+
+    double computePhysicalWidgetRadiusPx(const CelestialBody& body, const BodyLayout& bodyLayout) const;
+    double applyVisualClamp(double widgetRadiusPx,
+                            CelestialBody::BodyClass bodyClass,
+                            SizeSource* outSource = nullptr) const;
+    static QString sizeSourceLabel(SizeSource source);
+
     void rebuildLayout();
     int findBodyAt(const QPointF& widgetPos) const;
-    double bodyDrawRadiusPx(const CelestialBody& body, const BodyLayout& bodyLayout) const;
+    double bodyDrawRadiusPx(const CelestialBody& body,
+                            const BodyLayout& bodyLayout,
+                            SizeSource* outSource = nullptr) const;
     double currentKmPerPixel() const;
 
     QString m_systemName;
@@ -54,4 +68,5 @@ private:
     bool m_movedSincePress = false;
     QPoint m_lastMousePos;
     QPoint m_pressPos;
+    int m_selectedBodyId = -1;
 };
