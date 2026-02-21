@@ -214,7 +214,7 @@ void SystemSceneWidget::wheelEvent(QWheelEvent* event) {
 
     const double step = numDegrees.y() / 15.0;
     const double factor = std::pow(1.15, step);
-    const double newZoom = qBound(0.05, m_zoom * factor, 40.0);
+    const double newZoom = qBound(0.02, m_zoom * factor, 400.0);
     if (qFuzzyCompare(newZoom, m_zoom)) {
         return;
     }
@@ -232,19 +232,44 @@ void SystemSceneWidget::wheelEvent(QWheelEvent* event) {
 
 
 double SystemSceneWidget::bodyDrawRadiusPx(const CelestialBody& body, const BodyLayout& bodyLayout) const {
-    // Радиус на экране = физический радиус (км), преобразованный в масштаб текущей сцены.
-    // Делим на m_zoom, потому что дальше painter уже масштабирует сцену.
+    // На максимальном приближении ширина окна интерпретируется как 10 000 км.
+    // Тогда физический диаметр тел становится строго относительным в масштабе.
+    constexpr double referenceScreenWidthKm = 10000.0;
+    const double pxPerKmAtMaxZoom = width() / referenceScreenWidthKm;
+
     if (body.physicalRadiusKm > 0.0) {
-        constexpr double kmPerAu = 149597870.7;
-        const double radiusScenePx = (body.physicalRadiusKm / kmPerAu) * bodyLayout.pxPerAu;
-        const double minWidgetRadiusPx = 1.0;
-        const double maxWidgetRadiusPx = 30.0;
-        const double radiusWidgetPx = qBound(minWidgetRadiusPx, radiusScenePx * m_zoom, maxWidgetRadiusPx);
-        return radiusWidgetPx / m_zoom;
+        const double physicalRadiusWidgetPxAtMaxZoom = body.physicalRadiusKm * pxPerKmAtMaxZoom;
+        const double progress = zoomProgress();
+
+        // На дальних масштабах сильно сжимаем размеры, но оставляем различия между типами тел.
+        const double reducedRadiusWidgetPx = std::pow(qMax(physicalRadiusWidgetPxAtMaxZoom, 0.05), 0.35);
+        const double blendedRadiusWidgetPx = reducedRadiusWidgetPx * (1.0 - progress)
+            + physicalRadiusWidgetPxAtMaxZoom * progress;
+
+        // Небольшие, но различимые размеры на обычном отдалении.
+        const double minWidgetRadiusPx = 1.1;
+        const double maxWidgetRadiusPx = 170.0;
+        return qBound(minWidgetRadiusPx, blendedRadiusWidgetPx, maxWidgetRadiusPx) / m_zoom;
     }
 
-    const double fallbackWidgetPx = qBound(1.0, bodyLayout.radius * m_zoom, 24.0);
+    const double fallbackWidgetPx = qBound(1.0, bodyLayout.radius * m_zoom, 14.0);
     return fallbackWidgetPx / m_zoom;
+}
+
+
+double SystemSceneWidget::zoomProgress() const {
+    // Плавный переход: только у верхней границы масштаб приближается к «истинному» физическому.
+    // Нормализация по log нужна, чтобы шаги колесика воспринимались равномерно.
+    constexpr double minZoom = 0.02;
+    constexpr double maxZoom = 400.0;
+
+    const double logMin = std::log(minZoom);
+    const double logMax = std::log(maxZoom);
+    const double logCurrent = std::log(qBound(minZoom, m_zoom, maxZoom));
+    const double normalized = (logCurrent - logMin) / (logMax - logMin);
+
+    // «Истинный» масштаб включается только при действительно максимальном приближении.
+    return std::pow(qBound(0.0, normalized, 1.0), 3.5);
 }
 void SystemSceneWidget::rebuildLayout() {
     m_layout = SystemLayoutEngine::buildLayout(m_bodyMap, m_roots, rect());

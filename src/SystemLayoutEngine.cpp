@@ -82,8 +82,9 @@ QHash<int, BodyLayout> SystemLayoutEngine::buildLayout(const QHash<int, Celestia
     }
 
     const QPointF center = canvasRect.center();
-    const double safeHalfSize = qMax(50.0, qMin(canvasRect.width(), canvasRect.height()) * 0.44);
-    const double pxPerAu = maxOrbitAu > 0.0 ? (safeHalfSize / maxOrbitAu) : 50.0;
+    const double safeHalfSize = qMax(70.0, qMin(canvasRect.width(), canvasRect.height()) * 0.72);
+    // Усиливаем масштаб орбит: система выглядит крупнее и читается на отдалении лучше.
+    const double pxPerAu = maxOrbitAu > 0.0 ? (safeHalfSize / maxOrbitAu) : 85.0;
 
     if (roots.size() == 1) {
         layout.insert(roots.first(), BodyLayout{center, 9.0, 0.0, pxPerAu});
