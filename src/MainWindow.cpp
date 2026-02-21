@@ -101,9 +101,16 @@ MainWindow::MainWindow(QWidget* parent)
 
         m_sceneWidget->setSystemData(result.systemName, m_currentBodies, roots);
 
+        int realBodiesCount = 0;
+        for (auto it = m_currentBodies.constBegin(); it != m_currentBodies.constEnd(); ++it) {
+            if (!isVirtualBarycenterRoot(it.value())) {
+                ++realBodiesCount;
+            }
+        }
+
         QString status = QStringLiteral("Источник: %1. Загружено тел: %2")
                              .arg(dataSourceTitle(result.selectedSource))
-                             .arg(m_currentBodies.size());
+                             .arg(realBodiesCount);
 
 
         m_statusLabel->setText(status);

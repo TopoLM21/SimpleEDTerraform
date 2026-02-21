@@ -63,17 +63,21 @@ void SystemIdsWindow::setBodies(const QHash<int, CelestialBody>& bodies) {
 
     for (const int id : ids) {
         const CelestialBody body = m_bodies.value(id);
+        if (isVirtualBarycenterRoot(body)) {
+            continue;
+        }
+
         auto* item = new QListWidgetItem(QStringLiteral("ID %1 — %2").arg(QString::number(id), body.name), m_idsList);
         item->setData(Qt::UserRole, id);
     }
 
-    if (ids.isEmpty()) {
+    if (m_idsList->count() == 0) {
         m_detailsPanel->setPlainText(QStringLiteral("Нет данных для отображения ID."));
         return;
     }
 
     m_idsList->setCurrentRow(0);
-    const int firstId = ids.first();
+    const int firstId = m_idsList->item(0)->data(Qt::UserRole).toInt();
     m_detailsPanel->setPlainText(bodyDetailsText(m_bodies.value(firstId)));
 }
 

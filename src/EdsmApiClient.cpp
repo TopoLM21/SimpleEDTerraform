@@ -11,6 +11,7 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QRegularExpression>
+#include <QSet>
 #include <QSharedPointer>
 #include <QSslError>
 #include <QTimer>
@@ -121,6 +122,20 @@ bool isBarycenterRef(const QString& type) {
            || type.contains(QStringLiteral("Bary"), Qt::CaseInsensitive);
 }
 
+bool isVirtualRootRef(const ParentRef& ref) {
+    return ref.bodyId == kVirtualBarycenterRootId
+           && ref.type.compare(kVirtualBarycenterRootType, Qt::CaseInsensitive) == 0;
+}
+
+ParentRef normalizeParentRef(const ParentRef& ref) {
+    if (ref.bodyId == kVirtualBarycenterRootId
+        && ref.type.compare(QStringLiteral("Null"), Qt::CaseInsensitive) == 0) {
+        return ParentRef{kVirtualBarycenterRootType, kVirtualBarycenterRootId};
+    }
+
+    return ParentRef{normalizeParentType(ref.type), ref.bodyId};
+}
+
 QString parentRefKey(const ParentRef& ref) {
     return QStringLiteral("%1:%2").arg(ref.type.toLower(), QString::number(ref.bodyId));
 }
@@ -153,7 +168,7 @@ QVector<ParentRef> parseParentChainFromString(const QString& parentsText) {
             continue;
         }
 
-        chain.push_back({normalizeParentType(relationText.left(delimiterIndex)), relationId});
+        chain.push_back(normalizeParentRef({relationText.left(delimiterIndex), relationId}));
     }
 
     return chain;
@@ -191,7 +206,7 @@ QVector<ParentRef> parseParentChainFromArray(const QJsonValue& parentsValue) {
             continue;
         }
 
-        chain.push_back({normalizeParentType(relation.key()), relationId});
+        chain.push_back(normalizeParentRef({relation.key(), relationId}));
     }
 
     return chain;
@@ -205,7 +220,7 @@ void applyDirectParentFromChain(const QVector<ParentRef>& parentChain,
         return;
     }
 
-    const ParentRef& immediateParent = parentChain.first();
+    const ParentRef immediateParent = normalizeParentRef(parentChain.first());
     *outParentId = immediateParent.bodyId;
     *outRelationType = immediateParent.type;
     *outOrbitsBarycenter = isBarycenterRef(immediateParent.type);
@@ -225,16 +240,23 @@ void buildBarycenterHierarchy(QVector<CelestialBody>* bodies,
 
         const auto chain = parentsByBodyId.value(body.id);
         for (int i = 0; i < chain.size(); ++i) {
-            const ParentRef& parent = chain[i];
+            const ParentRef parent = normalizeParentRef(chain[i]);
             if (!parent.type.contains(QStringLiteral("Null"), Qt::CaseInsensitive)) {
                 continue;
             }
 
-            if (i + 1 >= chain.size()) {
+            // Если в цепочке верхний предок Null:0, подвешиваем ветку на виртуальный корень.
+            if (isVirtualRootRef(parent)) {
                 continue;
             }
 
-            const ParentRef& candidate = chain[i + 1];
+            ParentRef candidate;
+            if (i + 1 < chain.size()) {
+                candidate = normalizeParentRef(chain[i + 1]);
+            } else {
+                candidate = ParentRef{kVirtualBarycenterRootType, kVirtualBarycenterRootId};
+            }
+
             barycenterCandidates[parent.bodyId].insert(parentRefKey(candidate), candidate);
         }
     }
@@ -276,6 +298,97 @@ void buildBarycenterHierarchy(QVector<CelestialBody>* bodies,
     }
 }
 
+
+void ensureVirtualBarycenterRoot(QVector<CelestialBody>* bodies) {
+    for (const auto& body : *bodies) {
+        if (isVirtualBarycenterRoot(body)) {
+            return;
+        }
+    }
+
+    CelestialBody root;
+    root.id = kVirtualBarycenterRootId;
+    root.name = QStringLiteral("VirtualBarycenterRoot");
+    root.type = kVirtualBarycenterRootType;
+    root.bodyClass = CelestialBody::BodyClass::Unknown;
+    root.parentId = -1;
+    root.parentRelationType.clear();
+    root.orbitsBarycenter = false;
+    // Для Null:0 не требуем физических/орбитальных параметров: это технический узел графа.
+    root.distanceToArrivalLs = 0.0;
+    root.semiMajorAxisAu = 0.0;
+    root.physicalRadiusKm = 0.0;
+
+    bodies->push_back(root);
+}
+
+bool canReachStarOrVirtualRoot(const int bodyId,
+                               const QHash<int, CelestialBody>& bodyById,
+                               QSet<int>* recursionGuard) {
+    if (recursionGuard->contains(bodyId)) {
+        return false;
+    }
+
+    recursionGuard->insert(bodyId);
+    const auto it = bodyById.constFind(bodyId);
+    if (it == bodyById.constEnd()) {
+        recursionGuard->remove(bodyId);
+        return false;
+    }
+
+    const CelestialBody& body = it.value();
+    if (body.bodyClass == CelestialBody::BodyClass::Star || isVirtualBarycenterRoot(body)) {
+        recursionGuard->remove(bodyId);
+        return true;
+    }
+
+    if (body.parentId < 0 || !bodyById.contains(body.parentId)) {
+        recursionGuard->remove(bodyId);
+        return false;
+    }
+
+    const bool ok = canReachStarOrVirtualRoot(body.parentId, bodyById, recursionGuard);
+    recursionGuard->remove(bodyId);
+    return ok;
+}
+
+bool validateHierarchyCanReachStarOrVirtualRoot(const QVector<CelestialBody>& bodies,
+                                                const std::function<void(const QString&)>& onDebugInfo,
+                                                const QString& sourceLabel) {
+    QHash<int, CelestialBody> bodyById;
+    for (const auto& body : bodies) {
+        if (body.id >= 0) {
+            bodyById.insert(body.id, body);
+        }
+    }
+
+    bool allValid = true;
+    for (const auto& body : bodies) {
+        if (body.id < 0 || isVirtualBarycenterRoot(body)) {
+            continue;
+        }
+
+        QSet<int> recursionGuard;
+        if (!canReachStarOrVirtualRoot(body.id, bodyById, &recursionGuard)) {
+            allValid = false;
+            onDebugInfo(QStringLiteral("[%1][WARN] Некорректная иерархия: тело id=%2 ('%3') не имеет пути до Star:* или Null:0")
+                            .arg(sourceLabel,
+                                 QString::number(body.id),
+                                 body.name.isEmpty() ? QStringLiteral("<без имени>") : body.name));
+        }
+    }
+
+    return allValid;
+}
+
+bool prepareBodiesForGraph(QVector<CelestialBody>* bodies,
+                           const std::function<void(const QString&)>& onDebugInfo,
+                           const QString& sourceLabel) {
+    ensureVirtualBarycenterRoot(bodies);
+    return validateHierarchyCanReachStarOrVirtualRoot(*bodies, onDebugInfo, sourceLabel);
+}
+
+
 bool parseParentFromString(const QString& parentsText,
                            int* outParentId,
                            QString* outRelationType,
@@ -300,12 +413,12 @@ bool parseParentFromString(const QString& parentsText,
             continue;
         }
 
-        const bool relationOrbitsBarycenter = relationType.contains(QStringLiteral("Null"), Qt::CaseInsensitive)
-                                              || relationType.contains(QStringLiteral("Bary"), Qt::CaseInsensitive);
+        const ParentRef relation = normalizeParentRef({relationType, relationId});
+        const bool relationOrbitsBarycenter = isBarycenterRef(relation.type);
 
         // В данных `parents` первый элемент — непосредственный родитель для отрисовки орбит.
-        *outParentId = relationId;
-        *outRelationType = relationType;
+        *outParentId = relation.bodyId;
+        *outRelationType = relation.type;
         *outOrbitsBarycenter = relationOrbitsBarycenter;
         return true;
     }
@@ -342,12 +455,12 @@ bool parseParentFromArray(const QJsonValue& parentsValue,
             continue;
         }
 
-        const bool relationOrbitsBarycenter = relationType.contains(QStringLiteral("Null"), Qt::CaseInsensitive)
-                                              || relationType.contains(QStringLiteral("Bary"), Qt::CaseInsensitive);
+        const ParentRef relation = normalizeParentRef({relationType, relationId});
+        const bool relationOrbitsBarycenter = isBarycenterRef(relation.type);
 
         // В данных `parents` первый элемент — непосредственный родитель для отрисовки орбит.
-        *outParentId = relationId;
-        *outRelationType = relationType;
+        *outParentId = relation.bodyId;
+        *outRelationType = relation.type;
         *outOrbitsBarycenter = relationOrbitsBarycenter;
         return true;
     }
@@ -381,6 +494,9 @@ QVector<CelestialBody> parseEdsmBodies(const QJsonObject& rootObject) {
         bodies.push_back(body);
     }
 
+    prepareBodiesForGraph(&bodies,
+                          [](const QString&) {},
+                          QStringLiteral("EDSM"));
     return bodies;
 }
 
@@ -696,7 +812,10 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
                                                  {QStringLiteral("relationType"),
                                                   QStringLiteral("relation_type"),
                                                   QStringLiteral("type")});
-            body.orbitsBarycenter = body.parentRelationType.contains(QStringLiteral("Null"), Qt::CaseInsensitive);
+            const ParentRef normalizedParent = normalizeParentRef({body.parentRelationType, body.parentId});
+            body.parentId = normalizedParent.bodyId;
+            body.parentRelationType = normalizedParent.type;
+            body.orbitsBarycenter = isBarycenterRef(body.parentRelationType);
         }
 
         if (body.parentId < 0) {
@@ -735,6 +854,9 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
         bodies.push_back(body);
     }
 
+    prepareBodiesForGraph(&bodies,
+                          [](const QString&) {},
+                          QStringLiteral("SPANSH"));
     return bodies;
 }
 
@@ -873,7 +995,10 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
                                                  {QStringLiteral("relationType"),
                                                   QStringLiteral("relation_type"),
                                                   QStringLiteral("type")});
-            body.orbitsBarycenter = body.parentRelationType.contains(QStringLiteral("Null"), Qt::CaseInsensitive);
+            const ParentRef normalizedParent = normalizeParentRef({body.parentRelationType, body.parentId});
+            body.parentId = normalizedParent.bodyId;
+            body.parentRelationType = normalizedParent.type;
+            body.orbitsBarycenter = isBarycenterRef(body.parentRelationType);
         }
 
         if (body.parentId < 0) {
@@ -917,6 +1042,7 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
     }
 
     buildBarycenterHierarchy(&bodies, parentsByBodyId, systemName, onDebugInfo);
+    prepareBodiesForGraph(&bodies, onDebugInfo, QStringLiteral("EDASTRO"));
 
     return bodies;
 }
@@ -1299,14 +1425,22 @@ void EdsmApiClient::requestEdastroSystemBodies(const QString& systemName) {
             return;
         }
 
-        const auto bodies = parseEdastroBodies(document,
-                                               trimmedSystemName,
-                                               [this](const QString& message) { emit requestDebugInfo(message); });
+        auto bodies = parseEdastroBodies(document,
+                                         trimmedSystemName,
+                                         [this](const QString& message) { emit requestDebugInfo(message); });
+        const bool hierarchyValid = prepareBodiesForGraph(&bodies,
+                                                          [this](const QString& message) { emit requestDebugInfo(message); },
+                                                          QStringLiteral("EDASTRO"));
         reportLsToAuSanityWarnings(bodies,
                                    QStringLiteral("EDASTRO"),
                                    [this](const QString& message) { emit requestDebugInfo(message); });
         if (bodies.isEmpty()) {
             emit requestFailed(QStringLiteral("EDAstro вернул пустой список тел или неизвестный формат полей."));
+            return;
+        }
+
+        if (!hierarchyValid) {
+            emit requestFailed(QStringLiteral("Иерархия системы некорректна: не для всех тел найден путь до Star:* или Null:0."));
             return;
         }
 
@@ -1379,6 +1513,12 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemR
             result.bodies = state->edsmBodies;
         }
 
+        const bool hierarchyValid = result.bodies.isEmpty()
+            ? false
+            : prepareBodiesForGraph(&result.bodies,
+                                    [this](const QString& message) { emit requestDebugInfo(message); },
+                                    sourceToText(result.selectedSource));
+
         emit requestDebugInfo(QStringLiteral("[SUMMARY] mode=%1, EDSM(done=%2, parsed=%3, timedOut=%4, bodies=%5, error='%6'), "
                                             "Spansh(done=%7, parsed=%8, timedOut=%9, bodies=%10, error='%11')")
                                   .arg(modeToText(mode))
@@ -1407,6 +1547,12 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemR
 
             emit requestStateChanged(QStringLiteral("Не удалось получить тела системы."));
             emit requestFailed(failureReason);
+            return;
+        }
+
+        if (!hierarchyValid) {
+            emit requestStateChanged(QStringLiteral("Иерархия системы некорректна."));
+            emit requestFailed(QStringLiteral("Иерархия системы некорректна: не для всех тел найден путь до Star:* или Null:0."));
             return;
         }
 
