@@ -1,7 +1,9 @@
 #include <QCoreApplication>
 #include <QFile>
 #include <QHash>
+#include <QJsonArray>
 #include <QJsonDocument>
+#include <QJsonObject>
 #include <QJsonParseError>
 #include <QStringList>
 #include <QtTest>
@@ -42,6 +44,7 @@ class EdastroHierarchyTests : public QObject {
 private slots:
     void eadstroBarycenterResolvesToStar();
     void colHierarchyResolvesThroughNull4();
+    void synthesizesMissingBarycenterFromNullParentRef();
 };
 
 void EdastroHierarchyTests::eadstroBarycenterResolvesToStar() {
@@ -97,6 +100,44 @@ void EdastroHierarchyTests::colHierarchyResolvesThroughNull4() {
     QVERIFY2(map.contains(26), "Expected CD 4 a id=26");
     QCOMPARE(map.value(26).parentId, 25);
     QCOMPARE(map.value(26).parentRelationType, QStringLiteral("Planet"));
+}
+
+void EdastroHierarchyTests::synthesizesMissingBarycenterFromNullParentRef() {
+    QJsonObject root;
+
+    QJsonArray stars;
+    stars.push_back(QJsonObject{{QStringLiteral("id"), 0},
+                                {QStringLiteral("name"), QStringLiteral("Primary")},
+                                {QStringLiteral("type"), QStringLiteral("Star")}});
+    stars.push_back(QJsonObject{{QStringLiteral("id"), 10},
+                                {QStringLiteral("name"), QStringLiteral("Companion A")},
+                                {QStringLiteral("type"), QStringLiteral("Star")},
+                                {QStringLiteral("parents"), QStringLiteral("Null:42;Star:0")}});
+    stars.push_back(QJsonObject{{QStringLiteral("id"), 11},
+                                {QStringLiteral("name"), QStringLiteral("Companion B")},
+                                {QStringLiteral("type"), QStringLiteral("Star")},
+                                {QStringLiteral("parents"), QStringLiteral("Null:42;Star:0")}});
+    root.insert(QStringLiteral("stars"), stars);
+    root.insert(QStringLiteral("barycenters"), QJsonArray{});
+
+    QStringList diagnostics;
+    const auto bodies = parseEdastroBodiesForTests(QJsonDocument(root),
+                                                   QStringLiteral("Synthetic test system"),
+                                                   [&diagnostics](const QString& message) {
+                                                       diagnostics.push_back(message);
+                                                   });
+    const auto map = toMap(bodies);
+
+    QVERIFY2(map.contains(42), "Expected synthetic barycenter body id=42");
+    QCOMPARE(map.value(42).bodyClass, CelestialBody::BodyClass::Barycenter);
+    QCOMPARE(map.value(42).type, QStringLiteral("Barycenter"));
+    QCOMPARE(map.value(42).parentId, 0);
+    QCOMPARE(map.value(42).parentRelationType, QStringLiteral("Star"));
+
+    QVERIFY2(map.contains(10), "Expected companion star id=10");
+    QVERIFY2(map.contains(11), "Expected companion star id=11");
+    QCOMPARE(map.value(10).parentId, 42);
+    QCOMPARE(map.value(11).parentId, 42);
 }
 
 QTEST_MAIN(EdastroHierarchyTests)

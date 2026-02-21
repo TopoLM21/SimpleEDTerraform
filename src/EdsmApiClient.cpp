@@ -455,6 +455,44 @@ void buildBarycenterHierarchy(QVector<CelestialBody>* bodies,
     }
 }
 
+void synthesizeMissingBarycenters(QVector<CelestialBody>* bodies,
+                                  const QHash<int, QVector<ParentRef>>& parentsByBodyId) {
+    QSet<int> existingBodyIds;
+    for (const auto& body : *bodies) {
+        if (body.id >= 0) {
+            existingBodyIds.insert(body.id);
+        }
+    }
+
+    QSet<int> missingBarycenterIds;
+    for (auto it = parentsByBodyId.constBegin(); it != parentsByBodyId.constEnd(); ++it) {
+        const auto& parentChain = it.value();
+        for (const auto& relation : parentChain) {
+            const ParentRef normalizedParent = normalizeParentRef(relation);
+            if (!normalizedParent.type.contains(QStringLiteral("Null"), Qt::CaseInsensitive)
+                || normalizedParent.bodyId == kVirtualBarycenterRootId
+                || normalizedParent.bodyId < 0
+                || existingBodyIds.contains(normalizedParent.bodyId)) {
+                continue;
+            }
+
+            missingBarycenterIds.insert(normalizedParent.bodyId);
+        }
+    }
+
+    for (const int barycenterId : missingBarycenterIds) {
+        CelestialBody syntheticBarycenter;
+        syntheticBarycenter.id = barycenterId;
+        syntheticBarycenter.name = QStringLiteral("Barycenter %1").arg(barycenterId);
+        syntheticBarycenter.type = QStringLiteral("Barycenter");
+        syntheticBarycenter.bodyClass = CelestialBody::BodyClass::Barycenter;
+        syntheticBarycenter.parentId = -1;
+        syntheticBarycenter.parentRelationType = QStringLiteral("Unknown");
+        syntheticBarycenter.orbitsBarycenter = false;
+        bodies->push_back(syntheticBarycenter);
+    }
+}
+
 
 void ensureVirtualBarycenterRoot(QVector<CelestialBody>* bodies) {
     for (const auto& body : *bodies) {
@@ -1198,6 +1236,7 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
         bodies.push_back(body);
     }
 
+    synthesizeMissingBarycenters(&bodies, parentsByBodyId);
     buildBarycenterHierarchy(&bodies, parentsByBodyId, systemName, onDebugInfo);
 
     QSet<int> barycenterIds;
