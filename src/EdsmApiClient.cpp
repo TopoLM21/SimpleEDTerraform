@@ -665,12 +665,16 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
                                                QStringLiteral("distanceToArrivalLs"),
                                                QStringLiteral("distanceToArrivalLS")});
 
-        constexpr double lightSecondsPerAu = 499.0047838;
-        const double semiMajorAxisLs = readDouble(bodyObj,
-                                                  {QStringLiteral("semiMajorAxis"),
-                                                   QStringLiteral("semi_major_axis"),
-                                                   QStringLiteral("semiMajorAxisLs")});
-        body.semiMajorAxisAu = semiMajorAxisLs > 0.0 ? (semiMajorAxisLs / lightSecondsPerAu) : 0.0;
+        body.semiMajorAxisAu = readDouble(bodyObj,
+                                          {QStringLiteral("semiMajorAxis"),
+                                           QStringLiteral("semi_major_axis")});
+        if (body.semiMajorAxisAu <= 0.0) {
+            constexpr double lightSecondsPerAu = 499.0047838;
+            const double semiMajorAxisLs = readDouble(bodyObj,
+                                                      {QStringLiteral("semiMajorAxisLs"),
+                                                       QStringLiteral("semi_major_axis_ls")});
+            body.semiMajorAxisAu = semiMajorAxisLs > 0.0 ? (semiMajorAxisLs / lightSecondsPerAu) : 0.0;
+        }
         body.physicalRadiusKm = readPhysicalRadiusKm(bodyObj);
 
         body.bodyClass = classifyEdastroBodyClass(collectionKey, bodyObj, body.type);
