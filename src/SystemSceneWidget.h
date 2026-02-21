@@ -11,11 +11,17 @@
 class SystemSceneWidget : public QWidget {
     Q_OBJECT
 public:
+    enum class BodySizeMode {
+        VisualClamped,
+        Physical
+    };
+
     explicit SystemSceneWidget(QWidget* parent = nullptr);
 
     void setSystemData(const QString& systemName,
                        const QHash<int, CelestialBody>& bodyMap,
                        const QVector<int>& roots);
+    void setBodySizeMode(BodySizeMode mode);
 
 signals:
     void bodyClicked(int bodyId);
@@ -40,6 +46,7 @@ private:
     QVector<int> m_roots;
     QHash<int, BodyLayout> m_layout;
     OrbitClassificationResult m_orbitClassification;
+    BodySizeMode m_bodySizeMode = BodySizeMode::VisualClamped;
 
     double m_zoom = 1.0;
     QPointF m_panOffset;

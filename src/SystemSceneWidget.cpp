@@ -75,6 +75,15 @@ void SystemSceneWidget::setSystemData(const QString& systemName,
     rebuildLayout();
 }
 
+void SystemSceneWidget::setBodySizeMode(const BodySizeMode mode) {
+    if (m_bodySizeMode == mode) {
+        return;
+    }
+
+    m_bodySizeMode = mode;
+    update();
+}
+
 void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     QWidget::paintEvent(event);
 
@@ -264,13 +273,18 @@ double SystemSceneWidget::bodyDrawRadiusPx(const CelestialBody& body, const Body
         constexpr double kmPerAu = 149597870.7;
         // Текущий «истинный» масштаб: сколько экранных пикселей приходится на 1 км.
         const double physicalRadiusWidgetPx = body.physicalRadiusKm * (bodyLayout.pxPerAu * m_zoom / kmPerAu);
+        const double unclampedWidgetRadiusPx = qMax(minWidgetRadiusPx, physicalRadiusWidgetPx);
 
-        // На сильном отдалении фиксируем минимальный диаметр.
-        // Как только физический размер в пикселях становится больше минимума,
-        // объект растет строго по реальному масштабу.
-        const double widgetRadiusPx = qMax(minWidgetRadiusPx, physicalRadiusWidgetPx);
-        constexpr double maxWidgetRadiusPx = 170.0;
-        return qMin(widgetRadiusPx, maxWidgetRadiusPx) / m_zoom;
+        if (m_bodySizeMode == BodySizeMode::Physical) {
+            // Очень высокий защитный предел нужен только как anti-artifact ограничение,
+            // чтобы избежать артефактов/переполнения в рендере на экстремальных масштабах.
+            constexpr double physicalSafetyMaxWidgetRadiusPx = 8000.0;
+            return qMin(unclampedWidgetRadiusPx, physicalSafetyMaxWidgetRadiusPx) / m_zoom;
+        }
+
+        // VisualClamped: обзорный UX-режим с визуальным max-клипом размера тела.
+        constexpr double visualMaxWidgetRadiusPx = 170.0;
+        return qMin(unclampedWidgetRadiusPx, visualMaxWidgetRadiusPx) / m_zoom;
     }
 
     const double fallbackWidgetPx = qBound(minWidgetRadiusPx, bodyLayout.radius * m_zoom, 14.0);

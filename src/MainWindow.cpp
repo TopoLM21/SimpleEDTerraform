@@ -81,6 +81,13 @@ MainWindow::MainWindow(QWidget* parent)
     setupUi();
     m_systemIdsWindow = new SystemIdsWindow(this);
 
+    connect(m_bodySizeModeCombo, qOverload<int>(&QComboBox::currentIndexChanged), this, [this](const int index) {
+        const auto mode = index == 1
+            ? SystemSceneWidget::BodySizeMode::Physical
+            : SystemSceneWidget::BodySizeMode::VisualClamped;
+        m_sceneWidget->setBodySizeMode(mode);
+    });
+
     connect(m_loadButton, &QPushButton::clicked, this, [this]() {
         const auto systemName = m_systemNameEdit->text().trimmed();
 
@@ -152,6 +159,12 @@ void MainWindow::setupUi() {
     m_sourceCombo->addItem(QStringLiteral("Только EDAstro"));
     m_sourceCombo->setEnabled(false);
 
+    auto* bodySizeModeTitle = new QLabel(QStringLiteral("Размер тел:"), central);
+    m_bodySizeModeCombo = new QComboBox(central);
+    m_bodySizeModeCombo->addItem(QStringLiteral("VisualClamped"));
+    m_bodySizeModeCombo->addItem(QStringLiteral("Physical"));
+    m_bodySizeModeCombo->setToolTip(QStringLiteral("VisualClamped ограничивает максимальный экранный размер, Physical показывает физический масштаб."));
+
     m_loadButton = new QPushButton(QStringLiteral("Загрузить"), central);
     m_showIdsButton = new QPushButton(QStringLiteral("ID системы"), central);
     m_statusLabel = new QLabel(QStringLiteral("Ожидание запроса"), central);
@@ -160,6 +173,8 @@ void MainWindow::setupUi() {
     topPanel->addWidget(m_systemNameEdit, 1);
     topPanel->addWidget(sourceTitle);
     topPanel->addWidget(m_sourceCombo);
+    topPanel->addWidget(bodySizeModeTitle);
+    topPanel->addWidget(m_bodySizeModeCombo);
     topPanel->addWidget(m_loadButton);
     topPanel->addWidget(m_showIdsButton);
 

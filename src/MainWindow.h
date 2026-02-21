@@ -26,6 +26,7 @@ private:
     QPushButton* m_loadButton = nullptr;
     QPushButton* m_showIdsButton = nullptr;
     QComboBox* m_sourceCombo = nullptr;
+    QComboBox* m_bodySizeModeCombo = nullptr;
     QLabel* m_statusLabel = nullptr;
     QTextEdit* m_bodyDetailsPanel = nullptr;
     SystemSceneWidget* m_sceneWidget = nullptr;
