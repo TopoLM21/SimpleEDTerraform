@@ -168,10 +168,6 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
             continue;
         }
 
-        if (bodyIt->bodyClass == CelestialBody::BodyClass::Barycenter) {
-            continue;
-        }
-
         const QPointF parentPos = m_layout.value(bodyIt->parentId).position;
         painter.drawEllipse(parentPos, it->orbitRadius, it->orbitRadius);
     }
@@ -184,6 +180,7 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     bodyLabels.reserve(m_bodyMap.size());
 
     for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
+        // Орбиту барицентра показываем для структуры системы, сам барицентр не рисуем как объект.
         if (!m_layout.contains(it.key()) || it->bodyClass == CelestialBody::BodyClass::Barycenter) {
             continue;
         }
