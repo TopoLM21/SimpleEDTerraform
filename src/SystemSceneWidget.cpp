@@ -72,6 +72,7 @@ void SystemSceneWidget::setSystemData(const QString& systemName,
     m_isDragging = false;
     m_movedSincePress = false;
     m_orbitClassification = OrbitClassifier::classify(m_bodyMap);
+    m_selectedBodyId = -1;
     rebuildLayout();
 }
 
@@ -148,7 +149,7 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
 
         const BodyLayout bodyLayout = m_layout.value(it.key());
         const QPointF point = bodyLayout.position;
-        const double radius = bodyDrawRadiusPx(*it, bodyLayout);
+        const double radius = bodyDrawRadiusPx(*it, bodyLayout, nullptr);
 
         const QSet<BodyOrbitType> bodyTypes = m_orbitClassification.bodyTypes.value(it.key());
 
@@ -168,6 +169,12 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         const QStringList typeLabels = OrbitClassifier::bodyTypeLabels(bodyTypes);
         if (!typeLabels.isEmpty()) {
             labelParts.push_back(typeLabels.join(QStringLiteral(", ")));
+        }
+
+        if (it.key() == m_selectedBodyId) {
+            SizeSource source = SizeSource::Physical;
+            bodyDrawRadiusPx(*it, bodyLayout, &source);
+            labelParts.push_back(QStringLiteral("SIZE_SRC=%1").arg(sizeSourceLabel(source)));
         }
 
         const QPointF labelScenePos = point + QPointF(radius + 4.0 / m_zoom, -radius - 2.0 / m_zoom);
@@ -227,10 +234,13 @@ void SystemSceneWidget::mouseReleaseEvent(QMouseEvent* event) {
         if (treatAsClick) {
             const int bodyId = findBodyAt(event->pos());
             if (bodyId >= 0) {
+                m_selectedBodyId = bodyId;
                 emit bodyClicked(bodyId);
             } else {
+                m_selectedBodyId = -1;
                 emit emptyAreaClicked();
             }
+            update();
         }
 
         event->accept();
@@ -266,28 +276,79 @@ void SystemSceneWidget::wheelEvent(QWheelEvent* event) {
 
 
 
-double SystemSceneWidget::bodyDrawRadiusPx(const CelestialBody& body, const BodyLayout& bodyLayout) const {
-    const double minWidgetRadiusPx = minimumBodyDiameterPx(body.bodyClass) / 2.0;
-
-    if (body.physicalRadiusKm > 0.0 && bodyLayout.pxPerAu > 0.0) {
-        constexpr double kmPerAu = 149597870.7;
-        // Текущий «истинный» масштаб: сколько экранных пикселей приходится на 1 км.
-        const double physicalRadiusWidgetPx = body.physicalRadiusKm * (bodyLayout.pxPerAu * m_zoom / kmPerAu);
-        const double unclampedWidgetRadiusPx = qMax(minWidgetRadiusPx, physicalRadiusWidgetPx);
-
-        if (m_bodySizeMode == BodySizeMode::Physical) {
-            // Очень высокий защитный предел нужен только как anti-artifact ограничение,
-            // чтобы избежать артефактов/переполнения в рендере на экстремальных масштабах.
-            constexpr double physicalSafetyMaxWidgetRadiusPx = 8000.0;
-            return qMin(unclampedWidgetRadiusPx, physicalSafetyMaxWidgetRadiusPx) / m_zoom;
-        }
-
-        // VisualClamped: обзорный UX-режим с визуальным max-клипом размера тела.
-        constexpr double visualMaxWidgetRadiusPx = 170.0;
-        return qMin(unclampedWidgetRadiusPx, visualMaxWidgetRadiusPx) / m_zoom;
+QString SystemSceneWidget::sizeSourceLabel(const SizeSource source) {
+    switch (source) {
+    case SizeSource::Min:
+        return QStringLiteral("MIN");
+    case SizeSource::Physical:
+        return QStringLiteral("PHYSICAL");
+    case SizeSource::MaxClamp:
+        return QStringLiteral("MAX_CLAMP");
     }
 
-    const double fallbackWidgetPx = qBound(minWidgetRadiusPx, bodyLayout.radius * m_zoom, 14.0);
+    return QStringLiteral("PHYSICAL");
+}
+
+double SystemSceneWidget::computePhysicalWidgetRadiusPx(const CelestialBody& body, const BodyLayout& bodyLayout) const {
+    if (body.physicalRadiusKm <= 0.0 || bodyLayout.pxPerAu <= 0.0 || m_zoom <= 0.0) {
+        return 0.0;
+    }
+
+    constexpr double kmPerAu = 149597870.7;
+    // Физический размер тела в экранных пикселях при текущем зуме.
+    return body.physicalRadiusKm * (bodyLayout.pxPerAu * m_zoom / kmPerAu);
+}
+
+double SystemSceneWidget::applyVisualClamp(const double widgetRadiusPx,
+                                           const CelestialBody::BodyClass bodyClass,
+                                           SizeSource* outSource) const {
+    const double minWidgetRadiusPx = minimumBodyDiameterPx(bodyClass) / 2.0;
+    constexpr double visualMaxWidgetRadiusPx = 170.0;
+
+    double result = widgetRadiusPx;
+    SizeSource source = SizeSource::Physical;
+
+    if (result < minWidgetRadiusPx) {
+        result = minWidgetRadiusPx;
+        source = SizeSource::Min;
+    }
+
+    if (result > visualMaxWidgetRadiusPx) {
+        result = visualMaxWidgetRadiusPx;
+        source = SizeSource::MaxClamp;
+    }
+
+    if (outSource != nullptr) {
+        *outSource = source;
+    }
+
+    return result;
+}
+
+double SystemSceneWidget::bodyDrawRadiusPx(const CelestialBody& body,
+                                           const BodyLayout& bodyLayout,
+                                           SizeSource* outSource) const {
+    const double physicalWidgetRadiusPx = computePhysicalWidgetRadiusPx(body, bodyLayout);
+
+    if (physicalWidgetRadiusPx > 0.0) {
+        if (m_bodySizeMode == BodySizeMode::Physical) {
+            constexpr double physicalSafetyMaxWidgetRadiusPx = 8000.0;
+            const double cappedWidgetRadiusPx = qMin(physicalWidgetRadiusPx, physicalSafetyMaxWidgetRadiusPx);
+            if (outSource != nullptr) {
+                *outSource = cappedWidgetRadiusPx < physicalWidgetRadiusPx
+                    ? SizeSource::MaxClamp
+                    : SizeSource::Physical;
+            }
+            return cappedWidgetRadiusPx / m_zoom;
+        }
+
+        return applyVisualClamp(physicalWidgetRadiusPx, body.bodyClass, outSource) / m_zoom;
+    }
+
+    const double fallbackWidgetPx = qBound(2.0, bodyLayout.radius * m_zoom, 14.0);
+    if (outSource != nullptr) {
+        *outSource = SizeSource::Physical;
+    }
     return fallbackWidgetPx / m_zoom;
 }
 
@@ -326,7 +387,7 @@ int SystemSceneWidget::findBodyAt(const QPointF& widgetPos) const {
 
         const QPointF delta = scenePos - it->position;
         const double distanceSquared = delta.x() * delta.x() + delta.y() * delta.y();
-        const double drawRadius = bodyDrawRadiusPx(*bodyIt, *it);
+        const double drawRadius = bodyDrawRadiusPx(*bodyIt, *it, nullptr);
         const double radiusSquared = drawRadius * drawRadius;
         if (distanceSquared <= radiusSquared && distanceSquared < smallestDistance) {
             foundBodyId = it.key();
