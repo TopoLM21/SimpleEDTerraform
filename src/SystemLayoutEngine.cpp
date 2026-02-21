@@ -28,6 +28,11 @@ bool isMoonBody(const CelestialBody& body) {
     return body.type.contains(QStringLiteral("Moon"), Qt::CaseInsensitive);
 }
 
+bool isBarycenterBody(const CelestialBody& body) {
+    return body.bodyClass == CelestialBody::BodyClass::Barycenter
+        || OrbitClassifier::isBarycenterType(body.type);
+}
+
 int bodyTypePriority(const CelestialBody& body) {
     if (isStarBody(body)) {
         return 0;
@@ -143,7 +148,7 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
     QVector<int> outerChildren;
     outerChildren.reserve(sortedChildren.size());
 
-    if (OrbitClassifier::isBarycenterType(body.type) && sortedChildren.size() >= 2) {
+    if (isBarycenterBody(body) && sortedChildren.size() >= 2) {
         QVector<int> starChildren;
         for (const int childId : sortedChildren) {
             if (isStarBody(bodyMap[childId])) {
