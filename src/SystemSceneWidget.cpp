@@ -51,6 +51,25 @@ double minimumBodyDiameterPx(const CelestialBody::BodyClass bodyClass) {
 
     return 4.0;
 }
+
+QString bodyClassLabel(const CelestialBody::BodyClass bodyClass) {
+    switch (bodyClass) {
+    case CelestialBody::BodyClass::Star:
+        return QStringLiteral("звёзды");
+    case CelestialBody::BodyClass::Planet:
+        return QStringLiteral("планеты");
+    case CelestialBody::BodyClass::Moon:
+        return QStringLiteral("луны");
+    case CelestialBody::BodyClass::Barycenter:
+        return QStringLiteral("барицентры");
+    case CelestialBody::BodyClass::Unknown:
+        return QStringLiteral("прочие");
+    }
+
+    return QStringLiteral("прочие");
+}
+
+constexpr double visualMaxWidgetRadiusPx = 170.0;
 }
 
 
@@ -105,13 +124,35 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     const double kmPerPixel = currentKmPerPixel();
     painter.setPen(QColor(126, 155, 220));
     if (kmPerPixel > 0.0) {
-        painter.drawText(20, 70, QStringLiteral("Масштаб: 1 px = %1 км").arg(kmPerPixel, 0, 'g', 6));
+        painter.drawText(20, 70, QStringLiteral("Орбитальный масштаб: 1 px = %1 км").arg(kmPerPixel, 0, 'g', 6));
     } else {
-        painter.drawText(20, 70, QStringLiteral("Масштаб: недостаточно данных"));
+        painter.drawText(20, 70, QStringLiteral("Орбитальный масштаб: недостаточно данных"));
+    }
+
+    painter.setPen(QColor(114, 143, 208));
+    if (m_bodySizeMode == BodySizeMode::Physical) {
+        painter.drawText(20, 90, QStringLiteral("Размеры тел: физические"));
+    } else {
+        QString clampDetails = QStringLiteral("min=4 px, max=%1 px").arg(visualMaxWidgetRadiusPx * 2.0, 0, 'f', 0);
+        if (m_selectedBodyId >= 0) {
+            const auto selectedIt = m_bodyMap.constFind(m_selectedBodyId);
+            if (selectedIt != m_bodyMap.constEnd()) {
+                const double minDiameterPx = minimumBodyDiameterPx(selectedIt->bodyClass);
+                clampDetails = QStringLiteral("для класса «%1»: min=%2 px, max=%3 px")
+                    .arg(bodyClassLabel(selectedIt->bodyClass))
+                    .arg(minDiameterPx, 0, 'f', 0)
+                    .arg(visualMaxWidgetRadiusPx * 2.0, 0, 'f', 0);
+            }
+        }
+
+        painter.drawText(
+            20,
+            90,
+            QStringLiteral("Размеры тел: с визуальными ограничениями (min/max px) — %1").arg(clampDetails));
     }
 
     if (m_bodyMap.isEmpty() || m_layout.isEmpty()) {
-        painter.drawText(20, 90, QStringLiteral("Нет данных для отображения."));
+        painter.drawText(20, 110, QStringLiteral("Нет данных для отображения."));
         return;
     }
 
@@ -303,7 +344,6 @@ double SystemSceneWidget::applyVisualClamp(const double widgetRadiusPx,
                                            const CelestialBody::BodyClass bodyClass,
                                            SizeSource* outSource) const {
     const double minWidgetRadiusPx = minimumBodyDiameterPx(bodyClass) / 2.0;
-    constexpr double visualMaxWidgetRadiusPx = 170.0;
 
     double result = widgetRadiusPx;
     SizeSource source = SizeSource::Physical;
@@ -328,6 +368,9 @@ double SystemSceneWidget::applyVisualClamp(const double widgetRadiusPx,
 double SystemSceneWidget::bodyDrawRadiusPx(const CelestialBody& body,
                                            const BodyLayout& bodyLayout,
                                            SizeSource* outSource) const {
+    // Масштаб размеров тел (физический/ограниченный) независим от орбитального
+    // масштаба в currentKmPerPixel(): первый отвечает за читаемость дисков,
+    // второй — за отображение орбитальных расстояний.
     const double physicalWidgetRadiusPx = computePhysicalWidgetRadiusPx(body, bodyLayout);
 
     if (physicalWidgetRadiusPx > 0.0) {
@@ -353,6 +396,9 @@ double SystemSceneWidget::bodyDrawRadiusPx(const CelestialBody& body,
 }
 
 double SystemSceneWidget::currentKmPerPixel() const {
+    // Это именно орбитальный масштаб сцены (км на 1 px) для расстояний.
+    // Он не описывает масштаб радиусов тел: их рендер регулируется отдельно
+    // режимом BodySizeMode в bodyDrawRadiusPx().
     if (m_layout.isEmpty() || m_zoom <= 0.0) {
         return 0.0;
     }
