@@ -1,11 +1,13 @@
 #pragma once
 
 #include <QObject>
+#include <functional>
 #include <QVector>
 
 #include "CelestialBody.h"
 
 class QNetworkAccessManager;
+class QJsonDocument;
 
 enum class SystemDataSource {
     Edsm,
@@ -52,3 +54,8 @@ private:
 };
 
 Q_DECLARE_METATYPE(SystemBodiesResult);
+
+// Тестовый хелпер: позволяет проверять парсинг EDastro без запуска сетевых запросов.
+QVector<CelestialBody> parseEdastroBodiesForTests(const QJsonDocument& document,
+                                                  const QString& defaultSystemName,
+                                                  const std::function<void(const QString&)>& onDebugInfo);
