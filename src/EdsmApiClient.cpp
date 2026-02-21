@@ -226,6 +226,154 @@ void applyDirectParentFromChain(const QVector<ParentRef>& parentChain,
     *outOrbitsBarycenter = isBarycenterRef(immediateParent.type);
 }
 
+
+
+struct HierarchyDiagnostic {
+    QString level;
+    int bodyId = -1;
+    QString parents;
+    QString reason;
+};
+
+void reportHierarchyDiagnostic(const QString& systemName,
+                               const HierarchyDiagnostic& diagnostic,
+                               const std::function<void(const QString&)>& onDebugInfo) {
+    onDebugInfo(QStringLiteral("[EDASTRO][%1] hierarchy diagnostics: system='%2', bodyId=%3, parents='%4', reason=%5")
+                    .arg(diagnostic.level,
+                         systemName,
+                         QString::number(diagnostic.bodyId),
+                         diagnostic.parents,
+                         diagnostic.reason));
+}
+
+QString parentChainToString(const QVector<ParentRef>& chain) {
+    if (chain.isEmpty()) {
+        return QStringLiteral("<empty>");
+    }
+
+    QStringList parts;
+    parts.reserve(chain.size());
+    for (const auto& ref : chain) {
+        parts.push_back(parentRefToString(ref));
+    }
+    return parts.join(QStringLiteral(";"));
+}
+
+void validateEdastroParentChains(const QVector<CelestialBody>& bodies,
+                                 const QHash<int, QVector<ParentRef>>& parentsByBodyId,
+                                 const QSet<int>& barycenterIds,
+                                 const QString& systemName,
+                                 const std::function<void(const QString&)>& onDebugInfo) {
+    QHash<int, QVector<ParentRef>> finalChainByBodyId;
+    for (const auto& body : bodies) {
+        if (body.id < 0) {
+            continue;
+        }
+
+        QVector<ParentRef> chain = parentsByBodyId.value(body.id);
+        if (chain.isEmpty() && body.parentId >= 0) {
+            chain.push_back(normalizeParentRef({body.parentRelationType, body.parentId}));
+        }
+        finalChainByBodyId.insert(body.id, chain);
+    }
+
+    // 1) Проверяем циклы Null/Star/Planet в цепочке родителей.
+    for (auto it = finalChainByBodyId.constBegin(); it != finalChainByBodyId.constEnd(); ++it) {
+        QSet<QString> seen;
+        for (const auto& ref : it.value()) {
+            const bool trackType = ref.type.contains(QStringLiteral("Null"), Qt::CaseInsensitive)
+                                   || ref.type.contains(QStringLiteral("Star"), Qt::CaseInsensitive)
+                                   || ref.type.contains(QStringLiteral("Planet"), Qt::CaseInsensitive);
+            if (!trackType) {
+                continue;
+            }
+
+            const QString key = parentRefKey(normalizeParentRef(ref));
+            if (seen.contains(key)) {
+                reportHierarchyDiagnostic(systemName,
+                                          HierarchyDiagnostic{QStringLiteral("ERROR"),
+                                                              it.key(),
+                                                              parentChainToString(it.value()),
+                                                              QStringLiteral("cycle")},
+                                          onDebugInfo);
+                break;
+            }
+            seen.insert(key);
+        }
+    }
+
+    // 2) Каждый Null:B у тел должен существовать в barycenters, кроме Null:0.
+    for (auto it = finalChainByBodyId.constBegin(); it != finalChainByBodyId.constEnd(); ++it) {
+        for (const auto& ref : it.value()) {
+            const ParentRef normalized = normalizeParentRef(ref);
+            if (!normalized.type.contains(QStringLiteral("Null"), Qt::CaseInsensitive)) {
+                continue;
+            }
+            if (isVirtualRootRef(normalized)) {
+                continue;
+            }
+            if (barycenterIds.contains(normalized.bodyId)) {
+                continue;
+            }
+
+            reportHierarchyDiagnostic(systemName,
+                                      HierarchyDiagnostic{QStringLiteral("ERROR"),
+                                                          it.key(),
+                                                          parentChainToString(it.value()),
+                                                          QStringLiteral("missing barycenter")},
+                                      onDebugInfo);
+            break;
+        }
+    }
+
+    // 3) У барицентра не более одного итогового родителя.
+    QHash<int, QSet<QString>> parentVariants;
+    for (auto it = finalChainByBodyId.constBegin(); it != finalChainByBodyId.constEnd(); ++it) {
+        const auto& chain = it.value();
+        for (int i = 0; i < chain.size(); ++i) {
+            const ParentRef node = normalizeParentRef(chain[i]);
+            if (!node.type.contains(QStringLiteral("Null"), Qt::CaseInsensitive) || isVirtualRootRef(node)) {
+                continue;
+            }
+
+            ParentRef candidate = ParentRef{kVirtualBarycenterRootType, kVirtualBarycenterRootId};
+            if (i + 1 < chain.size()) {
+                candidate = normalizeParentRef(chain[i + 1]);
+            }
+            parentVariants[node.bodyId].insert(parentRefKey(candidate));
+        }
+    }
+
+    for (auto it = parentVariants.constBegin(); it != parentVariants.constEnd(); ++it) {
+        if (it.value().size() <= 1) {
+            continue;
+        }
+
+        QVector<ParentRef> sourceChain;
+        for (auto bodyIt = finalChainByBodyId.constBegin(); bodyIt != finalChainByBodyId.constEnd(); ++bodyIt) {
+            for (const auto& ref : bodyIt.value()) {
+                const ParentRef normalized = normalizeParentRef(ref);
+                if (normalized.type.contains(QStringLiteral("Null"), Qt::CaseInsensitive)
+                    && !isVirtualRootRef(normalized)
+                    && normalized.bodyId == it.key()) {
+                    sourceChain = bodyIt.value();
+                    break;
+                }
+            }
+            if (!sourceChain.isEmpty()) {
+                break;
+            }
+        }
+
+        reportHierarchyDiagnostic(systemName,
+                                  HierarchyDiagnostic{QStringLiteral("WARNING"),
+                                                      it.key(),
+                                                      parentChainToString(sourceChain),
+                                                      QStringLiteral("multiple parents")},
+                                  onDebugInfo);
+    }
+}
+
 void buildBarycenterHierarchy(QVector<CelestialBody>* bodies,
                               const QHash<int, QVector<ParentRef>>& parentsByBodyId,
                               const QString& systemName,
@@ -1042,6 +1190,14 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
     }
 
     buildBarycenterHierarchy(&bodies, parentsByBodyId, systemName, onDebugInfo);
+
+    QSet<int> barycenterIds;
+    for (const auto& body : bodies) {
+        if (body.bodyClass == CelestialBody::BodyClass::Barycenter && body.id >= 0) {
+            barycenterIds.insert(body.id);
+        }
+    }
+    validateEdastroParentChains(bodies, parentsByBodyId, barycenterIds, systemName, onDebugInfo);
     prepareBodiesForGraph(&bodies, onDebugInfo, QStringLiteral("EDASTRO"));
 
     return bodies;
@@ -1158,6 +1314,12 @@ QVector<CelestialBody> mergeBodies(const QVector<CelestialBody>& edsmBodies,
 }
 
 } // namespace
+
+QVector<CelestialBody> parseEdastroBodiesForTests(const QJsonDocument& document,
+                                                  const QString& defaultSystemName,
+                                                  const std::function<void(const QString&)>& onDebugInfo) {
+    return parseEdastroBodies(document, defaultSystemName, onDebugInfo);
+}
 
 EdsmApiClient::EdsmApiClient(QObject* parent)
     : QObject(parent)
