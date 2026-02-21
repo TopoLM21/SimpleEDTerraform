@@ -106,6 +106,176 @@ CelestialBody::BodyClass classifyBodyClassFromType(const QString& bodyType) {
     return CelestialBody::BodyClass::Unknown;
 }
 
+
+struct ParentRef {
+    QString type;
+    int bodyId = -1;
+};
+
+QString normalizeParentType(const QString& type) {
+    return type.trimmed();
+}
+
+bool isBarycenterRef(const QString& type) {
+    return type.contains(QStringLiteral("Null"), Qt::CaseInsensitive)
+           || type.contains(QStringLiteral("Bary"), Qt::CaseInsensitive);
+}
+
+QString parentRefKey(const ParentRef& ref) {
+    return QStringLiteral("%1:%2").arg(ref.type.toLower(), QString::number(ref.bodyId));
+}
+
+QString parentRefToString(const ParentRef& ref) {
+    return QStringLiteral("%1:%2").arg(ref.type, QString::number(ref.bodyId));
+}
+
+QVector<ParentRef> parseParentChainFromString(const QString& parentsText) {
+    QVector<ParentRef> chain;
+
+    const auto trimmed = parentsText.trimmed();
+    if (trimmed.isEmpty()) {
+        return chain;
+    }
+
+    const auto relations = trimmed.split(';', Qt::SkipEmptyParts);
+    chain.reserve(relations.size());
+
+    for (const auto& relationTextRaw : relations) {
+        const auto relationText = relationTextRaw.trimmed();
+        const int delimiterIndex = relationText.indexOf(':');
+        if (delimiterIndex <= 0 || delimiterIndex >= relationText.size() - 1) {
+            continue;
+        }
+
+        bool ok = false;
+        const int relationId = relationText.mid(delimiterIndex + 1).trimmed().toInt(&ok);
+        if (!ok) {
+            continue;
+        }
+
+        chain.push_back({normalizeParentType(relationText.left(delimiterIndex)), relationId});
+    }
+
+    return chain;
+}
+
+QVector<ParentRef> parseParentChainFromArray(const QJsonValue& parentsValue) {
+    QVector<ParentRef> chain;
+    if (!parentsValue.isArray()) {
+        return chain;
+    }
+
+    const auto parentsArray = parentsValue.toArray();
+    chain.reserve(parentsArray.size());
+
+    for (const auto& relationValue : parentsArray) {
+        if (!relationValue.isObject()) {
+            continue;
+        }
+
+        const auto relationObject = relationValue.toObject();
+        if (relationObject.isEmpty()) {
+            continue;
+        }
+
+        const auto relation = relationObject.constBegin();
+        bool ok = false;
+        int relationId = -1;
+        if (relation.value().isDouble()) {
+            relationId = relation.value().toInt(-1);
+            ok = (relationId >= 0);
+        } else if (relation.value().isString()) {
+            relationId = relation.value().toString().trimmed().toInt(&ok);
+        }
+        if (!ok || relationId < 0) {
+            continue;
+        }
+
+        chain.push_back({normalizeParentType(relation.key()), relationId});
+    }
+
+    return chain;
+}
+
+void applyDirectParentFromChain(const QVector<ParentRef>& parentChain,
+                                int* outParentId,
+                                QString* outRelationType,
+                                bool* outOrbitsBarycenter) {
+    if (parentChain.isEmpty()) {
+        return;
+    }
+
+    const ParentRef& immediateParent = parentChain.first();
+    *outParentId = immediateParent.bodyId;
+    *outRelationType = immediateParent.type;
+    *outOrbitsBarycenter = isBarycenterRef(immediateParent.type);
+}
+
+void buildBarycenterHierarchy(QVector<CelestialBody>* bodies,
+                              const QHash<int, QVector<ParentRef>>& parentsByBodyId,
+                              const QString& systemName,
+                              const std::function<void(const QString&)>& onDebugInfo) {
+    QHash<int, QHash<QString, ParentRef>> barycenterCandidates;
+
+    for (const auto& body : *bodies) {
+        if (body.bodyClass != CelestialBody::BodyClass::Star
+            && body.bodyClass != CelestialBody::BodyClass::Planet) {
+            continue;
+        }
+
+        const auto chain = parentsByBodyId.value(body.id);
+        for (int i = 0; i < chain.size(); ++i) {
+            const ParentRef& parent = chain[i];
+            if (!parent.type.contains(QStringLiteral("Null"), Qt::CaseInsensitive)) {
+                continue;
+            }
+
+            if (i + 1 >= chain.size()) {
+                continue;
+            }
+
+            const ParentRef& candidate = chain[i + 1];
+            barycenterCandidates[parent.bodyId].insert(parentRefKey(candidate), candidate);
+        }
+    }
+
+    for (auto& body : *bodies) {
+        if (body.bodyClass != CelestialBody::BodyClass::Barycenter) {
+            continue;
+        }
+
+        const auto candidates = barycenterCandidates.value(body.id);
+        if (candidates.isEmpty()) {
+            body.parentId = -1;
+            body.parentRelationType = QStringLiteral("Unknown");
+            body.orbitsBarycenter = false;
+            continue;
+        }
+
+        if (candidates.size() > 1) {
+            QStringList rendered;
+            rendered.reserve(candidates.size());
+            for (const auto& candidate : candidates) {
+                rendered.push_back(parentRefToString(candidate));
+            }
+
+            onDebugInfo(QStringLiteral("[EDASTRO][WARN] Конфликт иерархии барицентра: system='%1', barycenter=%2, candidates=[%3]")
+                            .arg(systemName,
+                                 QString::number(body.id),
+                                 rendered.join(QStringLiteral(", "))));
+            body.parentId = -1;
+            body.parentRelationType = QStringLiteral("Conflict");
+            body.orbitsBarycenter = false;
+            continue;
+        }
+
+        const ParentRef parent = candidates.constBegin().value();
+        body.parentId = parent.bodyId;
+        body.parentRelationType = parent.type;
+        body.orbitsBarycenter = isBarycenterRef(parent.type);
+    }
+}
+
 bool parseParentFromString(const QString& parentsText,
                            int* outParentId,
                            QString* outRelationType,
@@ -612,7 +782,9 @@ CelestialBody::BodyClass classifyEdastroBodyClass(const QString& collectionKey,
     return CelestialBody::BodyClass::Unknown;
 }
 
-QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObject) {
+QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObject,
+                                                    const QString& systemName,
+                                                    const std::function<void(const QString&)>& onDebugInfo) {
     QVector<QPair<QString, QJsonObject>> rawBodies;
 
     auto appendBodies = [&rawBodies](const QString& key, const QJsonArray& part) {
@@ -651,6 +823,7 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
 
     QVector<CelestialBody> bodies;
     bodies.reserve(rawBodies.size());
+    QHash<int, QVector<ParentRef>> parentsByBodyId;
 
     for (const auto& [collectionKey, bodyObj] : rawBodies) {
         CelestialBody body;
@@ -684,17 +857,14 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
         body.bodyClass = classifyEdastroBodyClass(collectionKey, bodyObj, body.type);
         body.orbitsBarycenter = (body.bodyClass == CelestialBody::BodyClass::Barycenter);
 
-        parseParentFromArray(bodyObj.value(QStringLiteral("parents")),
-                             &body.parentId,
-                             &body.parentRelationType,
-                             &body.orbitsBarycenter);
-
-        if (body.parentId < 0) {
-            parseParentFromString(readString(bodyObj, {QStringLiteral("parents")}),
-                                  &body.parentId,
-                                  &body.parentRelationType,
-                                  &body.orbitsBarycenter);
+        QVector<ParentRef> parentChain = parseParentChainFromString(readString(bodyObj, {QStringLiteral("parents")}));
+        if (parentChain.isEmpty()) {
+            parentChain = parseParentChainFromArray(bodyObj.value(QStringLiteral("parents")));
         }
+        applyDirectParentFromChain(parentChain,
+                                   &body.parentId,
+                                   &body.parentRelationType,
+                                   &body.orbitsBarycenter);
 
         if (body.parentId < 0 && bodyObj.value(QStringLiteral("parent")).isObject()) {
             const auto parentObject = bodyObj.value(QStringLiteral("parent")).toObject();
@@ -739,20 +909,31 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
             }
         }
 
+        if (body.id >= 0) {
+            parentsByBodyId.insert(body.id, parentChain);
+        }
+
         bodies.push_back(body);
     }
+
+    buildBarycenterHierarchy(&bodies, parentsByBodyId, systemName, onDebugInfo);
 
     return bodies;
 }
 
-QVector<CelestialBody> parseEdastroBodies(const QJsonDocument& document) {
+QVector<CelestialBody> parseEdastroBodies(const QJsonDocument& document,
+                                          const QString& defaultSystemName,
+                                          const std::function<void(const QString&)>& onDebugInfo) {
     if (document.isObject()) {
         const auto rootObject = document.object();
 
         // /api/starsystem может вернуть данные как объект системы либо как контейнер с массивом систем.
         if (rootObject.contains(QStringLiteral("name")) || rootObject.contains(QStringLiteral("bodies"))
             || rootObject.contains(QStringLiteral("systemBodies"))) {
-            const auto directBodies = parseEdastroBodiesFromObject(rootObject);
+            const auto parsedSystemName = readString(rootObject, {QStringLiteral("name")});
+            const auto directBodies = parseEdastroBodiesFromObject(rootObject,
+                                                                   parsedSystemName.isEmpty() ? defaultSystemName : parsedSystemName,
+                                                                   onDebugInfo);
             if (!directBodies.isEmpty()) {
                 return directBodies;
             }
@@ -768,7 +949,11 @@ QVector<CelestialBody> parseEdastroBodies(const QJsonDocument& document) {
                 continue;
             }
 
-            const auto candidateBodies = parseEdastroBodiesFromObject(systemsArray.first().toObject());
+            const auto firstObject = systemsArray.first().toObject();
+            const auto parsedSystemName = readString(firstObject, {QStringLiteral("name")});
+            const auto candidateBodies = parseEdastroBodiesFromObject(firstObject,
+                                                                      parsedSystemName.isEmpty() ? defaultSystemName : parsedSystemName,
+                                                                      onDebugInfo);
             if (!candidateBodies.isEmpty()) {
                 return candidateBodies;
             }
@@ -786,7 +971,11 @@ QVector<CelestialBody> parseEdastroBodies(const QJsonDocument& document) {
         return {};
     }
 
-    return parseEdastroBodiesFromObject(systemsArray.first().toObject());
+    const auto firstObject = systemsArray.first().toObject();
+    const auto parsedSystemName = readString(firstObject, {QStringLiteral("name")});
+    return parseEdastroBodiesFromObject(firstObject,
+                                        parsedSystemName.isEmpty() ? defaultSystemName : parsedSystemName,
+                                        onDebugInfo);
 }
 
 QVector<CelestialBody> mergeBodies(const QVector<CelestialBody>& edsmBodies,
@@ -1110,7 +1299,9 @@ void EdsmApiClient::requestEdastroSystemBodies(const QString& systemName) {
             return;
         }
 
-        const auto bodies = parseEdastroBodies(document);
+        const auto bodies = parseEdastroBodies(document,
+                                               trimmedSystemName,
+                                               [this](const QString& message) { emit requestDebugInfo(message); });
         reportLsToAuSanityWarnings(bodies,
                                    QStringLiteral("EDASTRO"),
                                    [this](const QString& message) { emit requestDebugInfo(message); });
