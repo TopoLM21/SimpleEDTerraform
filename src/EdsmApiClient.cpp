@@ -20,6 +20,9 @@
 namespace {
 
 constexpr int kRequestTimeoutMs = 15000;
+constexpr double kExpectedLsToAuRatio = 499.0047838;
+constexpr double kMinAllowedLsToAuRatio = 200.0;
+constexpr double kMaxAllowedLsToAuRatio = 2000.0;
 
 QString sourceToText(const SystemDataSource source) {
     switch (source) {
@@ -49,6 +52,38 @@ QString modeToText(const SystemRequestMode mode) {
     }
 
     return QStringLiteral("Unknown");
+}
+
+void reportLsToAuSanityWarnings(const QVector<CelestialBody>& bodies,
+                                const QString& sourceLabel,
+                                const std::function<void(const QString&)>& onDebugInfo) {
+    for (const auto& body : bodies) {
+        if (body.distanceToArrivalLs <= 0.0 || body.semiMajorAxisAu <= 0.0) {
+            continue;
+        }
+
+        // Проверяем только тела, орбитирующие звезду: для спутников планет
+        // ожидаемое отношение LS/AU не применимо.
+        if (!body.parentRelationType.contains(QStringLiteral("Star"), Qt::CaseInsensitive)) {
+            continue;
+        }
+
+        const double ratio = body.distanceToArrivalLs / body.semiMajorAxisAu;
+        if (ratio >= kMinAllowedLsToAuRatio && ratio <= kMaxAllowedLsToAuRatio) {
+            continue;
+        }
+
+        const QString bodyName = body.name.isEmpty() ? QStringLiteral("<без имени>") : body.name;
+        const QString bodyIdText = body.id >= 0 ? QString::number(body.id) : QStringLiteral("unknown");
+        onDebugInfo(QStringLiteral("[%1][WARN] Подозрительное отношение distanceToArrivalLS/semiMajorAxisAU для тела id=%2, name='%3': ratio=%4, distanceToArrivalLS=%5, semiMajorAxisAU=%6, expected≈%7")
+                        .arg(sourceLabel,
+                             bodyIdText,
+                             bodyName,
+                             QString::number(ratio, 'f', 3),
+                             QString::number(body.distanceToArrivalLs, 'f', 3),
+                             QString::number(body.semiMajorAxisAu, 'f', 6),
+                             QString::number(kExpectedLsToAuRatio, 'f', 3)));
+    }
 }
 
 
@@ -924,6 +959,7 @@ void requestSpanshBodiesBySystemIndex(QNetworkAccessManager* networkManager,
         }
 
         auto bodies = parseSpanshBodies(rootObject);
+        reportLsToAuSanityWarnings(bodies, QStringLiteral("SPANSH"), onDebugInfo);
         if (modeLabel.isEmpty()) {
             onDebugInfo(QStringLiteral("[SPANSH] Распарсено тел: %1")
                             .arg(bodies.size()));
@@ -1106,6 +1142,9 @@ void EdsmApiClient::requestEdastroSystemBodies(const QString& systemName) {
         }
 
         const auto bodies = parseEdastroBodies(document);
+        reportLsToAuSanityWarnings(bodies,
+                                   QStringLiteral("EDASTRO"),
+                                   [this](const QString& message) { emit requestDebugInfo(message); });
         if (bodies.isEmpty()) {
             emit requestFailed(QStringLiteral("EDAstro вернул пустой список тел или неизвестный формат полей."));
             return;
@@ -1278,6 +1317,9 @@ void EdsmApiClient::requestSystemBodies(const QString& systemName, const SystemR
 
         state->edsmParsed = true;
         state->edsmBodies = parseEdsmBodies(document.object());
+        reportLsToAuSanityWarnings(state->edsmBodies,
+                                   QStringLiteral("EDSM"),
+                                   [this](const QString& message) { emit requestDebugInfo(message); });
         emit requestDebugInfo(QStringLiteral("[EDSM] Ответ обработан. mode=%1, bodies=%2")
                                   .arg(modeToText(mode))
                                   .arg(state->edsmBodies.size()));
