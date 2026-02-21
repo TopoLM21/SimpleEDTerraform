@@ -4,7 +4,7 @@
 #include <QVector>
 
 inline constexpr int kExternalVirtualBarycenterMarkerId = 0;
-inline constexpr int kVirtualBarycenterRootId = -1000000000;
+inline constexpr int kVirtualBarycenterRootId = 0;
 inline const QString kVirtualBarycenterRootType = QStringLiteral("Null");
 
 struct CelestialBody {
