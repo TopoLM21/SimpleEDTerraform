@@ -181,7 +181,8 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
 
     for (auto it = m_bodyMap.constBegin(); it != m_bodyMap.constEnd(); ++it) {
         // Орбиту барицентра показываем для структуры системы, сам барицентр не рисуем как объект.
-        if (!m_layout.contains(it.key()) || it->bodyClass == CelestialBody::BodyClass::Barycenter) {
+        if (!m_layout.contains(it.key()) || it->bodyClass == CelestialBody::BodyClass::Barycenter
+            || isVirtualBarycenterRoot(it.value())) {
             continue;
         }
 
@@ -424,7 +425,9 @@ int SystemSceneWidget::findBodyAt(const QPointF& widgetPos) const {
 
     for (auto it = m_layout.constBegin(); it != m_layout.constEnd(); ++it) {
         const auto bodyIt = m_bodyMap.constFind(it.key());
-        if (bodyIt != m_bodyMap.constEnd() && bodyIt->bodyClass == CelestialBody::BodyClass::Barycenter) {
+        if (bodyIt == m_bodyMap.constEnd()
+            || bodyIt->bodyClass == CelestialBody::BodyClass::Barycenter
+            || isVirtualBarycenterRoot(bodyIt.value())) {
             continue;
         }
 

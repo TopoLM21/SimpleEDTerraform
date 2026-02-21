@@ -3,6 +3,9 @@
 #include <QString>
 #include <QVector>
 
+inline constexpr int kVirtualBarycenterRootId = 0;
+inline const QString kVirtualBarycenterRootType = QStringLiteral("Null");
+
 struct CelestialBody {
     enum class BodyClass {
         Unknown,
@@ -24,3 +27,8 @@ struct CelestialBody {
     BodyClass bodyClass = BodyClass::Unknown;
     QVector<int> children;
 };
+
+inline bool isVirtualBarycenterRoot(const CelestialBody& body) {
+    return body.id == kVirtualBarycenterRootId
+           && body.type.compare(kVirtualBarycenterRootType, Qt::CaseInsensitive) == 0;
+}
