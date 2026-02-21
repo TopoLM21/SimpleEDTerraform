@@ -116,16 +116,6 @@ bool parseParentFromString(const QString& parentsText,
     }
 
     const auto relations = trimmed.split(';', Qt::SkipEmptyParts);
-
-    bool found = false;
-    int selectedParentId = -1;
-    QString selectedRelationType;
-    bool selectedOrbitsBarycenter = false;
-
-    // В некоторых источниках в поле parents передаётся цепочка предков,
-    // например "Null:4;Null:0". Для визуализации орбит нужен ближайший
-    // родитель (обычно с ненулевым ID), иначе компоненты бинарной пары
-    // ошибочно привязываются к системному корню.
     for (const auto& relationTextRaw : relations) {
         const auto relationText = relationTextRaw.trimmed();
         const int delimiterIndex = relationText.indexOf(':');
@@ -143,22 +133,14 @@ bool parseParentFromString(const QString& parentsText,
         const bool relationOrbitsBarycenter = relationType.contains(QStringLiteral("Null"), Qt::CaseInsensitive)
                                               || relationType.contains(QStringLiteral("Bary"), Qt::CaseInsensitive);
 
-        if (!found || (selectedParentId <= 0 && relationId > 0)) {
-            found = true;
-            selectedParentId = relationId;
-            selectedRelationType = relationType;
-            selectedOrbitsBarycenter = relationOrbitsBarycenter;
-        }
+        // В данных `parents` первый элемент — непосредственный родитель для отрисовки орбит.
+        *outParentId = relationId;
+        *outRelationType = relationType;
+        *outOrbitsBarycenter = relationOrbitsBarycenter;
+        return true;
     }
 
-    if (!found) {
-        return false;
-    }
-
-    *outRelationType = selectedRelationType;
-    *outParentId = selectedParentId;
-    *outOrbitsBarycenter = selectedOrbitsBarycenter;
-    return true;
+    return false;
 }
 bool parseParentFromArray(const QJsonValue& parentsValue,
                           int* outParentId,
@@ -172,11 +154,6 @@ bool parseParentFromArray(const QJsonValue& parentsValue,
     if (parentsArray.isEmpty()) {
         return false;
     }
-
-    bool found = false;
-    int selectedParentId = -1;
-    QString selectedRelationType;
-    bool selectedOrbitsBarycenter = false;
 
     for (const auto& relationValue : parentsArray) {
         if (!relationValue.isObject()) {
@@ -198,22 +175,14 @@ bool parseParentFromArray(const QJsonValue& parentsValue,
         const bool relationOrbitsBarycenter = relationType.contains(QStringLiteral("Null"), Qt::CaseInsensitive)
                                               || relationType.contains(QStringLiteral("Bary"), Qt::CaseInsensitive);
 
-        if (!found || (selectedParentId <= 0 && relationId > 0)) {
-            found = true;
-            selectedParentId = relationId;
-            selectedRelationType = relationType;
-            selectedOrbitsBarycenter = relationOrbitsBarycenter;
-        }
+        // В данных `parents` первый элемент — непосредственный родитель для отрисовки орбит.
+        *outParentId = relationId;
+        *outRelationType = relationType;
+        *outOrbitsBarycenter = relationOrbitsBarycenter;
+        return true;
     }
 
-    if (!found) {
-        return false;
-    }
-
-    *outRelationType = selectedRelationType;
-    *outParentId = selectedParentId;
-    *outOrbitsBarycenter = selectedOrbitsBarycenter;
-    return true;
+    return false;
 }
 
 double readPhysicalRadiusKm(const QJsonObject& object);
