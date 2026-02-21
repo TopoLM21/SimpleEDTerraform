@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <QCoreApplication>
 #include <QFile>
 #include <QHash>
@@ -45,6 +46,7 @@ private slots:
     void eadstroBarycenterResolvesToStar();
     void colHierarchyResolvesThroughNull4();
     void synthesizesMissingBarycenterFromNullParentRef();
+    void buildsBarycenterParentFromMoonOnlyChain();
 };
 
 void EdastroHierarchyTests::eadstroBarycenterResolvesToStar() {
@@ -100,6 +102,47 @@ void EdastroHierarchyTests::colHierarchyResolvesThroughNull4() {
     QVERIFY2(map.contains(26), "Expected CD 4 a id=26");
     QCOMPARE(map.value(26).parentId, 25);
     QCOMPARE(map.value(26).parentRelationType, QStringLiteral("Planet"));
+}
+
+
+void EdastroHierarchyTests::buildsBarycenterParentFromMoonOnlyChain() {
+    QJsonObject root;
+
+    root.insert(QStringLiteral("stars"),
+                QJsonArray{QJsonObject{{QStringLiteral("id"), 0},
+                                       {QStringLiteral("name"), QStringLiteral("Primary")},
+                                       {QStringLiteral("type"), QStringLiteral("Star")}}});
+    root.insert(QStringLiteral("planets"),
+                QJsonArray{QJsonObject{{QStringLiteral("id"), 100},
+                                       {QStringLiteral("name"), QStringLiteral("Planet A")},
+                                       {QStringLiteral("type"), QStringLiteral("Planet")},
+                                       {QStringLiteral("parents"), QStringLiteral("Star:0")}}});
+    root.insert(QStringLiteral("moons"),
+                QJsonArray{QJsonObject{{QStringLiteral("id"), 101},
+                                       {QStringLiteral("name"), QStringLiteral("Moon A 1")},
+                                       {QStringLiteral("type"), QStringLiteral("Moon")},
+                                       {QStringLiteral("parents"), QStringLiteral("Planet:100;Null:7;Null:0")}}});
+    root.insert(QStringLiteral("barycenters"),
+                QJsonArray{QJsonObject{{QStringLiteral("id"), 7},
+                                       {QStringLiteral("name"), QStringLiteral("Barycenter 7")},
+                                       {QStringLiteral("type"), QStringLiteral("Barycenter")}}});
+
+    QStringList diagnostics;
+    const auto bodies = parseEdastroBodiesForTests(QJsonDocument(root),
+                                                   QStringLiteral("Moon-only barycenter parent test"),
+                                                   [&diagnostics](const QString& message) {
+                                                       diagnostics.push_back(message);
+                                                   });
+    const auto map = toMap(bodies);
+
+    QVERIFY2(map.contains(7), "Expected barycenter body id=7");
+    QCOMPARE(map.value(7).parentId, 0);
+    QCOMPARE(map.value(7).parentRelationType, QStringLiteral("Null"));
+
+    const bool hasHierarchyError = std::any_of(diagnostics.cbegin(), diagnostics.cend(), [](const QString& message) {
+        return message.contains(QStringLiteral("Некорректная иерархия"));
+    });
+    QVERIFY2(!hasHierarchyError, "Hierarchy should reach Star:* or Null:0 for all bodies");
 }
 
 void EdastroHierarchyTests::synthesizesMissingBarycenterFromNullParentRef() {

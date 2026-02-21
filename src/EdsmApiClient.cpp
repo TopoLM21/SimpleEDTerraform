@@ -391,7 +391,8 @@ void buildBarycenterHierarchy(QVector<CelestialBody>* bodies,
 
     for (const auto& body : *bodies) {
         if (body.bodyClass != CelestialBody::BodyClass::Star
-            && body.bodyClass != CelestialBody::BodyClass::Planet) {
+            && body.bodyClass != CelestialBody::BodyClass::Planet
+            && body.bodyClass != CelestialBody::BodyClass::Moon) {
             continue;
         }
 
