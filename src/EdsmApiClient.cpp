@@ -596,9 +596,9 @@ bool parseParentFromArray(const QJsonValue& parentsValue,
             continue;
         }
 
-        const auto relation = parentObject.constBegin();
-        const QString relationType = relation.key();
-        const int relationId = relation.value().toInt(-1);
+        const auto relationIt = parentObject.constBegin();
+        const QString relationType = relationIt.key();
+        const int relationId = relationIt.value().toInt(-1);
         if (relationId < 0) {
             continue;
         }
