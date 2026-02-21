@@ -225,6 +225,10 @@ QVector<ParentRef> parseParentChainFromArray(const QJsonValue& parentsValue) {
 }
 
 void applyDirectParentFromChain(const QVector<ParentRef>& parentChain,
+                                const QSet<int>& existingBodyIds,
+                                const QSet<int>& barycenterBodyIds,
+                                int bodyId,
+                                const std::function<void(const QString&)>& onDebugInfo,
                                 int* outParentId,
                                 QString* outRelationType,
                                 bool* outOrbitsBarycenter) {
@@ -232,10 +236,49 @@ void applyDirectParentFromChain(const QVector<ParentRef>& parentChain,
         return;
     }
 
-    const ParentRef immediateParent = normalizeParentRef(parentChain.first());
-    *outParentId = immediateParent.bodyId;
-    *outRelationType = immediateParent.type;
-    *outOrbitsBarycenter = isBarycenterRef(immediateParent.type);
+    auto isCandidateValid = [&](const ParentRef& candidate) {
+        if (isVirtualRootRef(candidate)) {
+            return true;
+        }
+        if (!existingBodyIds.contains(candidate.bodyId)) {
+            return false;
+        }
+
+        // Null/Bary relationship корректен только для известного barycenter body id.
+        if (isBarycenterRef(candidate.type)) {
+            return barycenterBodyIds.contains(candidate.bodyId);
+        }
+
+        return true;
+    };
+
+    const ParentRef firstParent = normalizeParentRef(parentChain.first());
+    ParentRef selectedParent = firstParent;
+    int selectedIndex = 0;
+
+    if (!isCandidateValid(firstParent)) {
+        for (int index = 1; index < parentChain.size(); ++index) {
+            const ParentRef candidate = normalizeParentRef(parentChain.at(index));
+            if (!isCandidateValid(candidate)) {
+                continue;
+            }
+
+            selectedParent = candidate;
+            selectedIndex = index;
+            break;
+        }
+    }
+
+    if (selectedIndex > 0) {
+        onDebugInfo(QStringLiteral("parents-order mismatch detected: bodyId=%1, selected=%2, original=%3")
+                        .arg(QString::number(bodyId),
+                             parentRefToString(selectedParent),
+                             parentRefToString(firstParent)));
+    }
+
+    *outParentId = selectedParent.bodyId;
+    *outRelationType = selectedParent.type;
+    *outOrbitsBarycenter = isBarycenterRef(selectedParent.type);
 }
 
 bool isParentReferenceValid(const int parentId, const QSet<int>& existingBodyIds) {
@@ -1017,14 +1060,25 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
     bodies.reserve(bodiesArray.size());
 
     QSet<int> existingBodyIds;
+    QSet<int> barycenterBodyIds;
     for (const auto& bodyValue : bodiesArray) {
         if (!bodyValue.isObject()) {
             continue;
         }
 
-        const int bodyId = readInt(bodyValue.toObject(), {QStringLiteral("bodyId"), QStringLiteral("id")});
+        const auto bodyObj = bodyValue.toObject();
+        const int bodyId = readInt(bodyObj, {QStringLiteral("bodyId"), QStringLiteral("id")});
         if (bodyId >= 0) {
             existingBodyIds.insert(bodyId);
+
+            const QString bodyType = readString(bodyObj,
+                                                {QStringLiteral("type"),
+                                                 QStringLiteral("subType"),
+                                                 QStringLiteral("sub_type"),
+                                                 QStringLiteral("bodyType")});
+            if (OrbitClassifier::isBarycenterType(bodyType)) {
+                barycenterBodyIds.insert(bodyId);
+            }
         }
     }
 
@@ -1062,6 +1116,10 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
             parentChain = parseParentChainFromString(readString(bodyObj, {QStringLiteral("parents")}));
         }
         applyDirectParentFromChain(parentChain,
+                                   existingBodyIds,
+                                   barycenterBodyIds,
+                                   body.id,
+                                   [](const QString&) {},
                                    &body.parentId,
                                    &body.parentRelationType,
                                    &body.orbitsBarycenter);
@@ -1187,11 +1245,22 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
     bodies.reserve(rawBodies.size());
     QHash<int, QVector<ParentRef>> parentsByBodyId;
     QSet<int> existingBodyIds;
+    QSet<int> barycenterBodyIds;
 
-    for (const auto& [_, bodyObj] : rawBodies) {
+    for (const auto& [collectionKey, bodyObj] : rawBodies) {
         const int bodyId = readInt(bodyObj, {QStringLiteral("bodyId"), QStringLiteral("id")});
         if (bodyId >= 0) {
             existingBodyIds.insert(bodyId);
+
+            const QString bodyType = readString(bodyObj,
+                                                {QStringLiteral("type"),
+                                                 QStringLiteral("subType"),
+                                                 QStringLiteral("sub_type"),
+                                                 QStringLiteral("bodyType"),
+                                                 QStringLiteral("body_type")});
+            if (classifyEdastroBodyClass(collectionKey, bodyObj, bodyType) == CelestialBody::BodyClass::Barycenter) {
+                barycenterBodyIds.insert(bodyId);
+            }
         }
     }
 
@@ -1232,6 +1301,10 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
             parentChain = parseParentChainFromArray(bodyObj.value(QStringLiteral("parents")));
         }
         applyDirectParentFromChain(parentChain,
+                                   existingBodyIds,
+                                   barycenterBodyIds,
+                                   body.id,
+                                   onDebugInfo,
                                    &body.parentId,
                                    &body.parentRelationType,
                                    &body.orbitsBarycenter);
