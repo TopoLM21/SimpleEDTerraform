@@ -11,6 +11,7 @@
 
 #include "CelestialBody.h"
 #include "EdsmApiClient.h"
+#include "SystemLayoutEngine.h"
 
 namespace {
 
@@ -47,6 +48,9 @@ private slots:
     void colHierarchyResolvesThroughNull4();
     void synthesizesMissingBarycenterFromNullParentRef();
     void buildsBarycenterParentFromMoonOnlyChain();
+    void parsesEdastroRootWithoutNameField();
+    void parsesEdastroNestedObjectContainer();
+    void binaryBarycenterChildrenUseSymmetricRadius();
 };
 
 void EdastroHierarchyTests::eadstroBarycenterResolvesToStar() {
@@ -143,6 +147,96 @@ void EdastroHierarchyTests::buildsBarycenterParentFromMoonOnlyChain() {
         return message.contains(QStringLiteral("Некорректная иерархия"));
     });
     QVERIFY2(!hasHierarchyError, "Hierarchy should reach Star:* or Null:0 for all bodies");
+}
+
+void EdastroHierarchyTests::parsesEdastroRootWithoutNameField() {
+    QJsonObject root;
+    root.insert(QStringLiteral("stars"),
+                QJsonArray{QJsonObject{{QStringLiteral("id"), 0},
+                                       {QStringLiteral("name"), QStringLiteral("Primary")},
+                                       {QStringLiteral("type"), QStringLiteral("Star")}}});
+
+    QStringList diagnostics;
+    const auto bodies = parseEdastroBodiesForTests(QJsonDocument(root),
+                                                   QStringLiteral("Root without name"),
+                                                   [&diagnostics](const QString& message) {
+                                                       diagnostics.push_back(message);
+                                                   });
+
+    QVERIFY2(!bodies.isEmpty(), "Expected parser to accept root with direct stars/planets collections even without name");
+    const auto map = toMap(bodies);
+    QVERIFY2(map.contains(0), "Expected root star body id=0");
+}
+
+void EdastroHierarchyTests::parsesEdastroNestedObjectContainer() {
+    QJsonObject systemObject;
+    systemObject.insert(QStringLiteral("stars"),
+                        QJsonArray{QJsonObject{{QStringLiteral("id"), 0},
+                                               {QStringLiteral("name"), QStringLiteral("Primary")},
+                                               {QStringLiteral("type"), QStringLiteral("Star")}}});
+
+    QJsonObject root;
+    root.insert(QStringLiteral("result"), systemObject);
+
+    QStringList diagnostics;
+    const auto bodies = parseEdastroBodiesForTests(QJsonDocument(root),
+                                                   QStringLiteral("Nested object container"),
+                                                   [&diagnostics](const QString& message) {
+                                                       diagnostics.push_back(message);
+                                                   });
+
+    QVERIFY2(!bodies.isEmpty(), "Expected parser to accept nested object container format");
+    const auto map = toMap(bodies);
+    QVERIFY2(map.contains(0), "Expected root star body id=0");
+}
+
+void EdastroHierarchyTests::binaryBarycenterChildrenUseSymmetricRadius() {
+    QHash<int, CelestialBody> bodyMap;
+
+    CelestialBody barycenter;
+    barycenter.id = 4;
+    barycenter.name = QStringLiteral("Barycenter 4");
+    barycenter.type = QStringLiteral("Barycenter");
+    barycenter.bodyClass = CelestialBody::BodyClass::Barycenter;
+    barycenter.parentId = -1;
+    barycenter.children = {5, 6};
+
+    CelestialBody starC;
+    starC.id = 5;
+    starC.name = QStringLiteral("Star C");
+    starC.type = QStringLiteral("Star");
+    starC.bodyClass = CelestialBody::BodyClass::Star;
+    starC.parentId = 4;
+    starC.semiMajorAxisAu = 0.04730196114;
+
+    CelestialBody starD;
+    starD.id = 6;
+    starD.name = QStringLiteral("Star D");
+    starD.type = QStringLiteral("Star");
+    starD.bodyClass = CelestialBody::BodyClass::Star;
+    starD.parentId = 4;
+    starD.semiMajorAxisAu = 0.048077432192;
+
+    bodyMap.insert(4, barycenter);
+    bodyMap.insert(5, starC);
+    bodyMap.insert(6, starD);
+
+    const auto layout = SystemLayoutEngine::buildLayout(bodyMap, {4}, QRectF(0.0, 0.0, 800.0, 600.0));
+    QVERIFY2(layout.contains(4), "Expected barycenter in layout");
+    QVERIFY2(layout.contains(5), "Expected star C in layout");
+    QVERIFY2(layout.contains(6), "Expected star D in layout");
+
+    const QPointF barycenterPos = layout.value(4).position;
+    const QPointF cPos = layout.value(5).position;
+    const QPointF dPos = layout.value(6).position;
+
+    const double cDx = cPos.x() - barycenterPos.x();
+    const double dDx = dPos.x() - barycenterPos.x();
+    const double cDy = cPos.y() - barycenterPos.y();
+    const double dDy = dPos.y() - barycenterPos.y();
+
+    QVERIFY2(qAbs(cDx + dDx) < 1e-6, "Binary stars should be placed on opposite ends of one diameter (X symmetry)");
+    QVERIFY2(qAbs(cDy + dDy) < 1e-6, "Binary stars should be placed on opposite ends of one diameter (Y symmetry)");
 }
 
 void EdastroHierarchyTests::synthesizesMissingBarycenterFromNullParentRef() {

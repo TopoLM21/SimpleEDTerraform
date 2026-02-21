@@ -143,7 +143,8 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
     QVector<int> outerChildren;
     outerChildren.reserve(sortedChildren.size());
 
-    if (OrbitClassifier::isBarycenterType(body.type) && sortedChildren.size() >= 2) {
+    if ((body.bodyClass == CelestialBody::BodyClass::Barycenter || OrbitClassifier::isBarycenterType(body.type))
+        && sortedChildren.size() >= 2) {
         QVector<int> starChildren;
         for (const int childId : sortedChildren) {
             if (isStarBody(bodyMap[childId])) {
@@ -187,12 +188,17 @@ void SystemLayoutEngine::layoutChildrenRecursive(const QHash<int, CelestialBody>
         });
 
         const double innerFallbackPx = qMax(8.0, fallbackDistancePx * 0.55);
+        const double firstOrbitAu = orbitalDistanceAu(bodyMap[keyChildren[0]]);
+        const double secondOrbitAu = orbitalDistanceAu(bodyMap[keyChildren[1]]);
+        // Компоненты бинарной пары должны лежать на одном диаметре. Если полуоси отличаются,
+        // используем среднюю, чтобы обе звезды располагались строго симметрично.
+        const double averagedOrbitAu = (firstOrbitAu > 0.0 && secondOrbitAu > 0.0)
+            ? ((firstOrbitAu + secondOrbitAu) * 0.5)
+            : 0.0;
+        const double pairDistancePx = averagedOrbitAu > 0.0 ? (averagedOrbitAu * pxPerAu) : innerFallbackPx;
+
         for (int i = 0; i < keyChildren.size(); ++i) {
             const int childId = keyChildren[i];
-            const double orbitAu = orbitalDistanceAu(bodyMap[childId]);
-            // Для компонентов бинарной системы сохраняем общий масштаб в пикселях через pxPerAu,
-            // чтобы орбиты оставались пропорциональными полуосям из данных EDSM.
-            const double pairDistancePx = orbitAu > 0.0 ? (orbitAu * pxPerAu) : innerFallbackPx;
             const double childAngle = M_PI * static_cast<double>(i);
             const QPointF childPosition(parentPosition.x() + qCos(childAngle) * pairDistancePx,
                                         parentPosition.y() + qSin(childAngle) * pairDistancePx);

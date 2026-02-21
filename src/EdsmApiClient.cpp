@@ -1384,19 +1384,29 @@ QVector<CelestialBody> parseEdastroBodies(const QJsonDocument& document,
     if (document.isObject()) {
         const auto rootObject = document.object();
 
-        // /api/starsystem может вернуть данные как объект системы либо как контейнер с массивом систем.
-        if (rootObject.contains(QStringLiteral("name")) || rootObject.contains(QStringLiteral("bodies"))
-            || rootObject.contains(QStringLiteral("systemBodies"))) {
-            const auto parsedSystemName = readString(rootObject, {QStringLiteral("name")});
-            const auto directBodies = parseEdastroBodiesFromObject(rootObject,
-                                                                   parsedSystemName.isEmpty() ? defaultSystemName : parsedSystemName,
-                                                                   onDebugInfo);
-            if (!directBodies.isEmpty()) {
-                return directBodies;
-            }
+        const auto parsedSystemName = readString(rootObject, {QStringLiteral("name")});
+        const auto directBodies = parseEdastroBodiesFromObject(rootObject,
+                                                               parsedSystemName.isEmpty() ? defaultSystemName : parsedSystemName,
+                                                               onDebugInfo);
+        if (!directBodies.isEmpty()) {
+            return directBodies;
         }
 
+        // /api/starsystem также может возвращать контейнеры вида {"systems": [...]} либо
+        // словари с вложенными объектами системы. Перебираем оба варианта.
         for (auto it = rootObject.constBegin(); it != rootObject.constEnd(); ++it) {
+            if (it.value().isObject()) {
+                const auto nestedObject = it.value().toObject();
+                const auto nestedSystemName = readString(nestedObject, {QStringLiteral("name")});
+                const auto nestedBodies = parseEdastroBodiesFromObject(nestedObject,
+                                                                       nestedSystemName.isEmpty() ? defaultSystemName : nestedSystemName,
+                                                                       onDebugInfo);
+                if (!nestedBodies.isEmpty()) {
+                    return nestedBodies;
+                }
+                continue;
+            }
+
             if (!it.value().isArray()) {
                 continue;
             }
@@ -1407,9 +1417,9 @@ QVector<CelestialBody> parseEdastroBodies(const QJsonDocument& document,
             }
 
             const auto firstObject = systemsArray.first().toObject();
-            const auto parsedSystemName = readString(firstObject, {QStringLiteral("name")});
+            const auto firstSystemName = readString(firstObject, {QStringLiteral("name")});
             const auto candidateBodies = parseEdastroBodiesFromObject(firstObject,
-                                                                      parsedSystemName.isEmpty() ? defaultSystemName : parsedSystemName,
+                                                                      firstSystemName.isEmpty() ? defaultSystemName : firstSystemName,
                                                                       onDebugInfo);
             if (!candidateBodies.isEmpty()) {
                 return candidateBodies;
