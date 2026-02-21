@@ -11,6 +11,7 @@
 
 #include "CelestialBody.h"
 #include "EdsmApiClient.h"
+#include "SystemLayoutEngine.h"
 
 namespace {
 
@@ -48,6 +49,7 @@ private slots:
     void synthesizesMissingBarycenterFromNullParentRef();
     void buildsBarycenterParentFromMoonOnlyChain();
     void parsesEdastroRootWithoutNameField();
+    void colLayoutPlacesBinaryStarsSymmetricallyForBodyClassBarycenter();
 };
 
 void EdastroHierarchyTests::eadstroBarycenterResolvesToStar() {
@@ -201,6 +203,44 @@ void EdastroHierarchyTests::synthesizesMissingBarycenterFromNullParentRef() {
     QVERIFY2(map.contains(11), "Expected companion star id=11");
     QCOMPARE(map.value(10).parentId, 42);
     QCOMPARE(map.value(11).parentId, 42);
+}
+
+
+void EdastroHierarchyTests::colLayoutPlacesBinaryStarsSymmetricallyForBodyClassBarycenter() {
+    const auto document = loadJson(QStringLiteral("col.json"));
+    QVERIFY2(!document.isNull(), "Failed to parse col.json");
+
+    QStringList diagnostics;
+    const auto bodies = parseEdastroBodiesForTests(document,
+                                                   QStringLiteral("Col 285 Sector XW-G b25-1"),
+                                                   [&diagnostics](const QString& message) {
+                                                       diagnostics.push_back(message);
+                                                   });
+    const auto map = toMap(bodies);
+
+    QVERIFY2(map.contains(0), "Expected virtual root id=0");
+    QVERIFY2(map.contains(4), "Expected barycenter body id=4");
+    QVERIFY2(map.contains(5), "Expected star C id=5");
+    QVERIFY2(map.contains(6), "Expected star D id=6");
+
+    const auto& barycenter = map.value(4);
+    QCOMPARE(barycenter.bodyClass, CelestialBody::BodyClass::Barycenter);
+    QVERIFY2(barycenter.type.isEmpty(), "Expected empty type for barycenter id=4 in col.json");
+
+    const auto layout = SystemLayoutEngine::buildLayout(map, QVector<int>{0}, QRectF(0.0, 0.0, 1200.0, 1200.0));
+    QVERIFY2(layout.contains(4), "Expected layout for barycenter id=4");
+    QVERIFY2(layout.contains(5), "Expected layout for star C id=5");
+    QVERIFY2(layout.contains(6), "Expected layout for star D id=6");
+
+    const QPointF barycenterPos = layout.value(4).position;
+    const QPointF cPos = layout.value(5).position;
+    const QPointF dPos = layout.value(6).position;
+
+    const QPointF pairMidpoint((cPos.x() + dPos.x()) * 0.5, (cPos.y() + dPos.y()) * 0.5);
+    QVERIFY2(qAbs(pairMidpoint.x() - barycenterPos.x()) < 0.01, "Binary pair midpoint X must match barycenter X");
+    QVERIFY2(qAbs(pairMidpoint.y() - barycenterPos.y()) < 0.01, "Binary pair midpoint Y must match barycenter Y");
+    QVERIFY2(qAbs((cPos.x() - barycenterPos.x()) + (dPos.x() - barycenterPos.x())) < 0.01,
+             "Stars must be mirrored on opposite sides of barycenter");
 }
 
 QTEST_MAIN(EdastroHierarchyTests)
