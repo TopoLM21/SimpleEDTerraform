@@ -122,11 +122,6 @@ bool isBarycenterRef(const QString& type) {
            || type.contains(QStringLiteral("Bary"), Qt::CaseInsensitive);
 }
 
-bool isExternalVirtualRootMarkerRef(const ParentRef& ref) {
-    return ref.bodyId == kExternalVirtualBarycenterMarkerId
-           && ref.type.compare(kVirtualBarycenterRootType, Qt::CaseInsensitive) == 0;
-}
-
 bool isVirtualRootRef(const ParentRef& ref) {
     return ref.bodyId == kVirtualBarycenterRootId
            && ref.type.compare(kVirtualBarycenterRootType, Qt::CaseInsensitive) == 0;
@@ -134,14 +129,6 @@ bool isVirtualRootRef(const ParentRef& ref) {
 
 ParentRef normalizeParentRef(const ParentRef& ref) {
     ParentRef normalized{normalizeParentType(ref.type), ref.bodyId};
-
-    // Во внешнем API Null:0 — специальный маркер «виртуального корня».
-    // Внутри графа всегда используем отдельный технический отрицательный id.
-    if (isExternalVirtualRootMarkerRef(normalized)) {
-        normalized.bodyId = kVirtualBarycenterRootId;
-        normalized.type = kVirtualBarycenterRootType;
-    }
-
     return normalized;
 }
 
@@ -282,7 +269,7 @@ void applyDirectParentFromChain(const QVector<ParentRef>& parentChain,
 }
 
 bool isParentReferenceValid(const int parentId, const QSet<int>& existingBodyIds) {
-    return parentId == kVirtualBarycenterRootId || existingBodyIds.contains(parentId);
+    return parentId == kExternalVirtualBarycenterMarkerId || existingBodyIds.contains(parentId);
 }
 
 bool resolveFallbackParent(const QJsonObject& bodyObj,
@@ -594,22 +581,22 @@ void synthesizeMissingBarycenters(QVector<CelestialBody>* bodies,
 }
 
 
-void ensureVirtualBarycenterRoot(QVector<CelestialBody>* bodies) {
+void ensureCentralRootBody(QVector<CelestialBody>* bodies) {
     for (const auto& body : *bodies) {
-        if (isVirtualBarycenterRoot(body)) {
+        if (body.id == kExternalVirtualBarycenterMarkerId) {
             return;
         }
     }
 
     CelestialBody root;
-    root.id = kVirtualBarycenterRootId;
-    root.name = QStringLiteral("VirtualBarycenterRoot");
-    root.type = kVirtualBarycenterRootType;
+    root.id = kExternalVirtualBarycenterMarkerId;
+    root.name = QStringLiteral("System Center");
+    root.type = QStringLiteral("Null");
     root.bodyClass = CelestialBody::BodyClass::Unknown;
     root.parentId = -1;
     root.parentRelationType.clear();
     root.orbitsBarycenter = false;
-    // Для внешнего маркера Null:0 (внутри — технический id) не требуем физических/орбитальных параметров: это технический узел графа.
+    // Синтетический центр служит только опорной точкой иерархии и отрисовки.
     root.distanceToArrivalLs = 0.0;
     root.semiMajorAxisAu = 0.0;
     root.physicalRadiusKm = 0.0;
@@ -617,9 +604,31 @@ void ensureVirtualBarycenterRoot(QVector<CelestialBody>* bodies) {
     bodies->push_back(root);
 }
 
-bool canReachStarOrVirtualRoot(const int bodyId,
-                               const QHash<int, CelestialBody>& bodyById,
-                               QSet<int>* recursionGuard) {
+void attachDetachedBodiesToCenterRoot(QVector<CelestialBody>* bodies) {
+    QSet<int> knownIds;
+    knownIds.reserve(bodies->size());
+    for (const auto& body : *bodies) {
+        if (body.id >= 0) {
+            knownIds.insert(body.id);
+        }
+    }
+
+    for (auto& body : *bodies) {
+        if (body.id == kExternalVirtualBarycenterMarkerId) {
+            continue;
+        }
+
+        if (body.parentId < 0 || !knownIds.contains(body.parentId)) {
+            body.parentId = kExternalVirtualBarycenterMarkerId;
+            body.parentRelationType = QStringLiteral("Null");
+            body.orbitsBarycenter = true;
+        }
+    }
+}
+
+bool canReachStarOrCenterRoot(const int bodyId,
+                              const QHash<int, CelestialBody>& bodyById,
+                              QSet<int>* recursionGuard) {
     if (recursionGuard->contains(bodyId)) {
         return false;
     }
@@ -632,7 +641,7 @@ bool canReachStarOrVirtualRoot(const int bodyId,
     }
 
     const CelestialBody& body = it.value();
-    if (body.bodyClass == CelestialBody::BodyClass::Star || isVirtualBarycenterRoot(body)) {
+    if (body.bodyClass == CelestialBody::BodyClass::Star || body.id == kExternalVirtualBarycenterMarkerId) {
         recursionGuard->remove(bodyId);
         return true;
     }
@@ -642,14 +651,14 @@ bool canReachStarOrVirtualRoot(const int bodyId,
         return false;
     }
 
-    const bool ok = canReachStarOrVirtualRoot(body.parentId, bodyById, recursionGuard);
+    const bool ok = canReachStarOrCenterRoot(body.parentId, bodyById, recursionGuard);
     recursionGuard->remove(bodyId);
     return ok;
 }
 
-bool validateHierarchyCanReachStarOrVirtualRoot(const QVector<CelestialBody>& bodies,
-                                                const std::function<void(const QString&)>& onDebugInfo,
-                                                const QString& sourceLabel) {
+bool validateHierarchyCanReachStarOrCenterRoot(const QVector<CelestialBody>& bodies,
+                                               const std::function<void(const QString&)>& onDebugInfo,
+                                               const QString& sourceLabel) {
     QHash<int, CelestialBody> bodyById;
     for (const auto& body : bodies) {
         if (body.id >= 0) {
@@ -659,12 +668,12 @@ bool validateHierarchyCanReachStarOrVirtualRoot(const QVector<CelestialBody>& bo
 
     bool allValid = true;
     for (const auto& body : bodies) {
-        if (body.id < 0 || isVirtualBarycenterRoot(body)) {
+        if (body.id < 0) {
             continue;
         }
 
         QSet<int> recursionGuard;
-        if (!canReachStarOrVirtualRoot(body.id, bodyById, &recursionGuard)) {
+        if (!canReachStarOrCenterRoot(body.id, bodyById, &recursionGuard)) {
             allValid = false;
             onDebugInfo(QStringLiteral("[%1][WARN] Некорректная иерархия: тело id=%2 ('%3') не имеет пути до Star:* или Null:0")
                             .arg(sourceLabel,
@@ -679,8 +688,9 @@ bool validateHierarchyCanReachStarOrVirtualRoot(const QVector<CelestialBody>& bo
 bool prepareBodiesForGraph(QVector<CelestialBody>* bodies,
                            const std::function<void(const QString&)>& onDebugInfo,
                            const QString& sourceLabel) {
-    ensureVirtualBarycenterRoot(bodies);
-    return validateHierarchyCanReachStarOrVirtualRoot(*bodies, onDebugInfo, sourceLabel);
+    ensureCentralRootBody(bodies);
+    attachDetachedBodiesToCenterRoot(bodies);
+    return validateHierarchyCanReachStarOrCenterRoot(*bodies, onDebugInfo, sourceLabel);
 }
 
 
