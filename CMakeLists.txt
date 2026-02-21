@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(SimpleEDTerraform VERSION 0.1.49 LANGUAGES CXX)
+project(SimpleEDTerraform VERSION 0.1.50 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -38,6 +38,7 @@ add_executable(SimpleEDTerraformTests
     src/EdsmApiClient.cpp
     src/OrbitClassifier.cpp
     src/SystemLayoutEngine.cpp
+    src/SystemModelBuilder.cpp
 )
 
 target_include_directories(SimpleEDTerraformTests PRIVATE src)
