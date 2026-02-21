@@ -122,18 +122,27 @@ bool isBarycenterRef(const QString& type) {
            || type.contains(QStringLiteral("Bary"), Qt::CaseInsensitive);
 }
 
+bool isExternalVirtualRootMarkerRef(const ParentRef& ref) {
+    return ref.bodyId == kExternalVirtualBarycenterMarkerId
+           && ref.type.compare(kVirtualBarycenterRootType, Qt::CaseInsensitive) == 0;
+}
+
 bool isVirtualRootRef(const ParentRef& ref) {
     return ref.bodyId == kVirtualBarycenterRootId
            && ref.type.compare(kVirtualBarycenterRootType, Qt::CaseInsensitive) == 0;
 }
 
 ParentRef normalizeParentRef(const ParentRef& ref) {
-    if (ref.bodyId == kVirtualBarycenterRootId
-        && ref.type.compare(QStringLiteral("Null"), Qt::CaseInsensitive) == 0) {
-        return ParentRef{kVirtualBarycenterRootType, kVirtualBarycenterRootId};
+    ParentRef normalized{normalizeParentType(ref.type), ref.bodyId};
+
+    // Во внешнем API Null:0 — специальный маркер «виртуального корня».
+    // Внутри графа всегда используем отдельный технический отрицательный id.
+    if (isExternalVirtualRootMarkerRef(normalized)) {
+        normalized.bodyId = kVirtualBarycenterRootId;
+        normalized.type = kVirtualBarycenterRootType;
     }
 
-    return ParentRef{normalizeParentType(ref.type), ref.bodyId};
+    return normalized;
 }
 
 QString parentRefKey(const ParentRef& ref) {
@@ -393,7 +402,7 @@ void buildBarycenterHierarchy(QVector<CelestialBody>* bodies,
                 continue;
             }
 
-            // Если в цепочке верхний предок Null:0, подвешиваем ветку на виртуальный корень.
+            // Если в цепочке верхний предок Null:0 (после нормализации — технический id), подвешиваем ветку на виртуальный корень.
             if (isVirtualRootRef(parent)) {
                 continue;
             }
@@ -462,7 +471,7 @@ void ensureVirtualBarycenterRoot(QVector<CelestialBody>* bodies) {
     root.parentId = -1;
     root.parentRelationType.clear();
     root.orbitsBarycenter = false;
-    // Для Null:0 не требуем физических/орбитальных параметров: это технический узел графа.
+    // Для внешнего маркера Null:0 (внутри — технический id) не требуем физических/орбитальных параметров: это технический узел графа.
     root.distanceToArrivalLs = 0.0;
     root.semiMajorAxisAu = 0.0;
     root.physicalRadiusKm = 0.0;
