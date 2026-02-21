@@ -12,6 +12,7 @@
 #include "CelestialBody.h"
 #include "EdsmApiClient.h"
 #include "SystemLayoutEngine.h"
+#include "SystemModelBuilder.h"
 
 namespace {
 
@@ -50,6 +51,8 @@ private slots:
     void buildsBarycenterParentFromMoonOnlyChain();
     void parsesEdastroRootWithoutNameField();
     void colLayoutPlacesBinaryStarsSymmetricallyForBodyClassBarycenter();
+    void buildBodyMapSkipsSelfParentInChildren();
+    void findRootBodiesReturnsRootAfterSelfParentNormalization();
 };
 
 void EdastroHierarchyTests::eadstroBarycenterResolvesToStar() {
@@ -241,6 +244,54 @@ void EdastroHierarchyTests::colLayoutPlacesBinaryStarsSymmetricallyForBodyClassB
     QVERIFY2(qAbs(pairMidpoint.y() - barycenterPos.y()) < 0.01, "Binary pair midpoint Y must match barycenter Y");
     QVERIFY2(qAbs((cPos.x() - barycenterPos.x()) + (dPos.x() - barycenterPos.x())) < 0.01,
              "Stars must be mirrored on opposite sides of barycenter");
+}
+
+void EdastroHierarchyTests::buildBodyMapSkipsSelfParentInChildren() {
+    CelestialBody root;
+    root.id = 0;
+    root.name = QStringLiteral("Root");
+    root.type = QStringLiteral("Null");
+
+    CelestialBody selfParent;
+    selfParent.id = 10;
+    selfParent.name = QStringLiteral("Self Parent");
+    selfParent.type = QStringLiteral("Planet");
+    selfParent.parentId = 10;
+
+    const auto bodyMap = SystemModelBuilder::buildBodyMap({root, selfParent});
+    QVERIFY2(bodyMap.contains(10), "Expected normalized body id=10");
+    QCOMPARE(bodyMap.value(10).parentId, 0);
+    QCOMPARE(bodyMap.value(10).parentRelationType, QStringLiteral("Null"));
+
+    QVERIFY2(bodyMap.contains(0), "Expected root id=0");
+    const auto& rootBody = bodyMap.value(0);
+    QVERIFY2(rootBody.children.contains(10), "Expected root to include normalized child id=10");
+
+    int selfLinks = 0;
+    for (const int childId : bodyMap.value(10).children) {
+        if (childId == 10) {
+            ++selfLinks;
+        }
+    }
+    QCOMPARE(selfLinks, 0);
+}
+
+void EdastroHierarchyTests::findRootBodiesReturnsRootAfterSelfParentNormalization() {
+    CelestialBody bodyA;
+    bodyA.id = 1;
+    bodyA.parentId = 1;
+    bodyA.name = QStringLiteral("A");
+
+    CelestialBody bodyB;
+    bodyB.id = 2;
+    bodyB.parentId = 1;
+    bodyB.name = QStringLiteral("B");
+
+    const auto map = SystemModelBuilder::buildBodyMap({bodyA, bodyB});
+    const auto roots = SystemModelBuilder::findRootBodies(map);
+
+    QVERIFY2(!roots.isEmpty(), "Expected at least one root after normalization");
+    QVERIFY2(roots.contains(1), "Expected normalized body id=1 to be detected as root");
 }
 
 QTEST_MAIN(EdastroHierarchyTests)

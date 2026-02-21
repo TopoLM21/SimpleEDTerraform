@@ -604,7 +604,9 @@ void ensureCentralRootBody(QVector<CelestialBody>* bodies) {
     bodies->push_back(root);
 }
 
-void attachDetachedBodiesToCenterRoot(QVector<CelestialBody>* bodies) {
+void attachDetachedBodiesToCenterRoot(QVector<CelestialBody>* bodies,
+                                    const std::function<void(const QString&)>& onDebugInfo,
+                                    const QString& sourceLabel) {
     QSet<int> knownIds;
     knownIds.reserve(bodies->size());
     for (const auto& body : *bodies) {
@@ -614,6 +616,21 @@ void attachDetachedBodiesToCenterRoot(QVector<CelestialBody>* bodies) {
     }
 
     for (auto& body : *bodies) {
+        if (body.parentId == body.id) {
+            onDebugInfo(QStringLiteral("[%1][WARN] Обнаружен self-parent body id=%2 ('%3'), переводим родителя на Null:0")
+                            .arg(sourceLabel,
+                                 QString::number(body.id),
+                                 body.name.isEmpty() ? QStringLiteral("<без имени>") : body.name));
+            body.parentRelationType = QStringLiteral("Null");
+            if (body.id == kExternalVirtualBarycenterMarkerId) {
+                body.parentId = -1;
+                body.orbitsBarycenter = false;
+            } else {
+                body.parentId = kExternalVirtualBarycenterMarkerId;
+                body.orbitsBarycenter = true;
+            }
+        }
+
         if (body.id == kExternalVirtualBarycenterMarkerId) {
             continue;
         }
@@ -689,7 +706,7 @@ bool prepareBodiesForGraph(QVector<CelestialBody>* bodies,
                            const std::function<void(const QString&)>& onDebugInfo,
                            const QString& sourceLabel) {
     ensureCentralRootBody(bodies);
-    attachDetachedBodiesToCenterRoot(bodies);
+    attachDetachedBodiesToCenterRoot(bodies, onDebugInfo, sourceLabel);
     return validateHierarchyCanReachStarOrCenterRoot(*bodies, onDebugInfo, sourceLabel);
 }
 
