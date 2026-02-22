@@ -1,18 +1,21 @@
 #include "SystemIdsWindow.h"
 
-#include <QHBoxLayout>
+#include "BodyDetailsWidget.h"
+
+#include <QCloseEvent>
 #include <QLabel>
-#include <QListWidget>
-#include <QTextEdit>
+#include <QSettings>
+#include <QSplitter>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
 #include <QVBoxLayout>
 
 #include <algorithm>
 
 namespace {
 
-QString yesNo(const bool value) {
-    return value ? QStringLiteral("да") : QStringLiteral("нет");
-}
+constexpr auto kSettingsGroup = "SystemIdsWindow";
+constexpr auto kSplitterSizesKey = "splitterSizes";
 
 } // namespace
 
@@ -24,42 +27,56 @@ SystemIdsWindow::SystemIdsWindow(QWidget* parent)
     auto* rootLayout = new QVBoxLayout(this);
     auto* title = new QLabel(QStringLiteral("Все ID тел текущей системы"), this);
 
-    auto* contentLayout = new QHBoxLayout();
-    m_idsList = new QListWidget(this);
-    m_idsList->setMinimumWidth(220);
+    m_splitter = new QSplitter(Qt::Horizontal, this);
 
-    m_detailsPanel = new QTextEdit(this);
-    m_detailsPanel->setReadOnly(true);
-    m_detailsPanel->setPlainText(QStringLiteral("Выберите ID слева, чтобы посмотреть параметры."));
+    m_bodiesTree = new QTreeWidget(m_splitter);
+    m_bodiesTree->setHeaderHidden(true);
+    m_bodiesTree->setMinimumWidth(220);
 
-    contentLayout->addWidget(m_idsList);
-    contentLayout->addWidget(m_detailsPanel, 1);
+    m_detailsPanel = new BodyDetailsWidget(m_splitter);
+    m_detailsPanel->setPlaceholderText(QStringLiteral("Выберите тело слева, чтобы посмотреть параметры."));
+
+    m_splitter->addWidget(m_bodiesTree);
+    m_splitter->addWidget(m_detailsPanel);
+    m_splitter->setStretchFactor(0, 0);
+    m_splitter->setStretchFactor(1, 1);
 
     rootLayout->addWidget(title);
-    rootLayout->addLayout(contentLayout, 1);
+    rootLayout->addWidget(m_splitter, 1);
 
-    connect(m_idsList, &QListWidget::itemClicked, this, [this](QListWidgetItem* item) {
-        if (!item) {
-            return;
-        }
+    restoreSplitterState();
 
-        const int bodyId = item->data(Qt::UserRole).toInt();
-        if (!m_bodies.contains(bodyId)) {
-            m_detailsPanel->setPlainText(QStringLiteral("Параметры для выбранного ID не найдены."));
-            return;
-        }
+    connect(m_bodiesTree, &QTreeWidget::currentItemChanged, this,
+            [this](QTreeWidgetItem* current, QTreeWidgetItem*) {
+                if (!current) {
+                    m_detailsPanel->setPlaceholderText(QStringLiteral("Выберите тело слева, чтобы посмотреть параметры."));
+                    return;
+                }
 
-        m_detailsPanel->setPlainText(bodyDetailsText(m_bodies.value(bodyId)));
-    });
+                const QVariant idData = current->data(0, Qt::UserRole);
+                if (!idData.isValid()) {
+                    m_detailsPanel->setPlaceholderText(QStringLiteral("Выберите узел тела, чтобы посмотреть параметры."));
+                    return;
+                }
+
+                const int bodyId = idData.toInt();
+                if (!m_bodies.contains(bodyId)) {
+                    m_detailsPanel->setPlaceholderText(QStringLiteral("Параметры для выбранного ID не найдены."));
+                    return;
+                }
+
+                m_detailsPanel->setBody(m_bodies.value(bodyId));
+            });
 }
 
 void SystemIdsWindow::setBodies(const QHash<int, CelestialBody>& bodies) {
     m_bodies = bodies;
-
-    m_idsList->clear();
+    m_bodiesTree->clear();
 
     QList<int> ids = m_bodies.keys();
     std::sort(ids.begin(), ids.end());
+
+    QHash<QString, QTreeWidgetItem*> classGroups;
 
     for (const int id : ids) {
         const CelestialBody body = m_bodies.value(id);
@@ -67,35 +84,92 @@ void SystemIdsWindow::setBodies(const QHash<int, CelestialBody>& bodies) {
             continue;
         }
 
-        auto* item = new QListWidgetItem(QStringLiteral("ID %1 — %2").arg(QString::number(id), body.name), m_idsList);
-        item->setData(Qt::UserRole, id);
+        const QString groupName = bodyClassGroupName(body);
+        QTreeWidgetItem* groupItem = classGroups.value(groupName, nullptr);
+        if (!groupItem) {
+            groupItem = new QTreeWidgetItem(m_bodiesTree);
+            groupItem->setText(0, groupName);
+            groupItem->setFirstColumnSpanned(true);
+            groupItem->setExpanded(true);
+            classGroups.insert(groupName, groupItem);
+        }
+
+        auto* bodyItem = new QTreeWidgetItem(groupItem);
+        bodyItem->setText(0, QStringLiteral("ID %1 — %2").arg(QString::number(id), body.name));
+        bodyItem->setData(0, Qt::UserRole, id);
     }
 
-    if (m_idsList->count() == 0) {
-        m_detailsPanel->setPlainText(QStringLiteral("Нет данных для отображения ID."));
+    if (m_bodiesTree->topLevelItemCount() == 0) {
+        m_detailsPanel->setPlaceholderText(QStringLiteral("Нет данных для отображения ID."));
         return;
     }
 
-    m_idsList->setCurrentRow(0);
-    const int firstId = m_idsList->item(0)->data(Qt::UserRole).toInt();
-    m_detailsPanel->setPlainText(bodyDetailsText(m_bodies.value(firstId)));
+    m_bodiesTree->expandAll();
+
+    for (int i = 0; i < m_bodiesTree->topLevelItemCount(); ++i) {
+        QTreeWidgetItem* group = m_bodiesTree->topLevelItem(i);
+        if (group && group->childCount() > 0) {
+            m_bodiesTree->setCurrentItem(group->child(0));
+            break;
+        }
+    }
 }
 
-QString SystemIdsWindow::bodyDetailsText(const CelestialBody& body) const {
-    QStringList lines;
-    lines << QStringLiteral("Название: %1").arg(body.name);
-    lines << QStringLiteral("ID: %1").arg(body.id);
-    lines << QStringLiteral("Тип: %1").arg(body.type.isEmpty() ? QStringLiteral("—") : body.type);
-    lines << QStringLiteral("Parent ID: %1").arg(body.parentId >= 0 ? QString::number(body.parentId) : QStringLiteral("—"));
+void SystemIdsWindow::closeEvent(QCloseEvent* event) {
+    saveSplitterState();
+    QWidget::closeEvent(event);
+}
 
-    if (!body.parentRelationType.isEmpty()) {
-        lines << QStringLiteral("Связь с родителем: %1").arg(body.parentRelationType);
+QString SystemIdsWindow::bodyClassGroupName(const CelestialBody& body) const {
+    const QString normalizedType = body.type.trimmed().toLower();
+
+    if (normalizedType.startsWith("star")) {
+        return QStringLiteral("Star");
     }
 
-    lines << QStringLiteral("До точки входа: %1 ls").arg(body.distanceToArrivalLs, 0, 'f', 2);
-    lines << QStringLiteral("Большая полуось: %1 AU").arg(body.semiMajorAxisAu, 0, 'f', 5);
-    lines << QStringLiteral("Детей: %1").arg(body.children.size());
-    lines << QStringLiteral("Орбита вокруг барицентра: %1").arg(yesNo(body.orbitsBarycenter));
+    if (normalizedType.startsWith("planet")) {
+        return QStringLiteral("Planet");
+    }
 
-    return lines.join('\n');
+    if (normalizedType.startsWith("moon")) {
+        return QStringLiteral("Moon");
+    }
+
+    if (normalizedType.startsWith("belt")) {
+        return QStringLiteral("Belt");
+    }
+
+    if (normalizedType.startsWith("ring")) {
+        return QStringLiteral("Ring");
+    }
+
+    return QStringLiteral("Other");
+}
+
+void SystemIdsWindow::restoreSplitterState() {
+    QSettings settings;
+    settings.beginGroup(QStringLiteral(kSettingsGroup));
+
+    const QList<QVariant> savedSizes = settings.value(QStringLiteral(kSplitterSizesKey)).toList();
+    if (savedSizes.size() == 2) {
+        m_splitter->setSizes({savedSizes.at(0).toInt(), savedSizes.at(1).toInt()});
+    } else {
+        m_splitter->setSizes({260, 500});
+    }
+
+    settings.endGroup();
+}
+
+void SystemIdsWindow::saveSplitterState() const {
+    QSettings settings;
+    settings.beginGroup(QStringLiteral(kSettingsGroup));
+
+    const QList<int> sizes = m_splitter->sizes();
+    QVariantList variantSizes;
+    for (const int size : sizes) {
+        variantSizes.push_back(size);
+    }
+
+    settings.setValue(QStringLiteral(kSplitterSizesKey), variantSizes);
+    settings.endGroup();
 }
