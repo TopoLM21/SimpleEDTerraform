@@ -148,9 +148,9 @@ QString SystemIdsWindow::bodyClassGroupName(const CelestialBody& body) const {
 
 void SystemIdsWindow::restoreSplitterState() {
     QSettings settings;
-    settings.beginGroup(QStringLiteral(kSettingsGroup));
+    settings.beginGroup(QLatin1String(kSettingsGroup));
 
-    const QList<QVariant> savedSizes = settings.value(QStringLiteral(kSplitterSizesKey)).toList();
+    const QList<QVariant> savedSizes = settings.value(QLatin1String(kSplitterSizesKey)).toList();
     if (savedSizes.size() == 2) {
         m_splitter->setSizes({savedSizes.at(0).toInt(), savedSizes.at(1).toInt()});
     } else {
@@ -162,7 +162,7 @@ void SystemIdsWindow::restoreSplitterState() {
 
 void SystemIdsWindow::saveSplitterState() const {
     QSettings settings;
-    settings.beginGroup(QStringLiteral(kSettingsGroup));
+    settings.beginGroup(QLatin1String(kSettingsGroup));
 
     const QList<int> sizes = m_splitter->sizes();
     QVariantList variantSizes;
@@ -170,6 +170,6 @@ void SystemIdsWindow::saveSplitterState() const {
         variantSizes.push_back(size);
     }
 
-    settings.setValue(QStringLiteral(kSplitterSizesKey), variantSizes);
+    settings.setValue(QLatin1String(kSplitterSizesKey), variantSizes);
     settings.endGroup();
 }

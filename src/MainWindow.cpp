@@ -226,9 +226,9 @@ void MainWindow::saveUiState() const {
     }
 
     QSettings settings;
-    settings.beginGroup(QStringLiteral(kSettingsGroupUi));
-    settings.setValue(QStringLiteral(kSettingsSplitterState), m_contentSplitter->saveState());
-    settings.setValue(QStringLiteral(kSettingsDetailsVisible), m_bodyDetailsPanel->isVisible());
+    settings.beginGroup(QLatin1String(kSettingsGroupUi));
+    settings.setValue(QLatin1String(kSettingsSplitterState), m_contentSplitter->saveState());
+    settings.setValue(QLatin1String(kSettingsDetailsVisible), m_bodyDetailsPanel->isVisible());
     settings.endGroup();
 }
 
@@ -238,10 +238,10 @@ void MainWindow::restoreUiState() {
     }
 
     QSettings settings;
-    settings.beginGroup(QStringLiteral(kSettingsGroupUi));
+    settings.beginGroup(QLatin1String(kSettingsGroupUi));
 
-    const auto splitterState = settings.value(QStringLiteral(kSettingsSplitterState)).toByteArray();
-    const bool detailsVisible = settings.value(QStringLiteral(kSettingsDetailsVisible), true).toBool();
+    const auto splitterState = settings.value(QLatin1String(kSettingsSplitterState)).toByteArray();
+    const bool detailsVisible = settings.value(QLatin1String(kSettingsDetailsVisible), true).toBool();
 
     if (!splitterState.isEmpty()) {
         m_contentSplitter->restoreState(splitterState);
