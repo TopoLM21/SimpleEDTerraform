@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include <QCloseEvent>
 #include <QComboBox>
 #include <QDebug>
 #include <QHBoxLayout>
@@ -7,6 +8,8 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSettings>
+#include <QSplitter>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -16,6 +19,10 @@
 #include "SystemSceneWidget.h"
 
 namespace {
+
+constexpr auto kSettingsGroupUi = "MainWindow";
+constexpr auto kSettingsSplitterState = "contentSplitterState";
+constexpr auto kSettingsDetailsVisible = "detailsVisible";
 
 QString dataSourceTitle(const SystemDataSource source) {
     switch (source) {
@@ -82,6 +89,10 @@ MainWindow::MainWindow(QWidget* parent)
         m_systemIdsWindow->activateWindow();
     });
 
+    connect(m_toggleDetailsButton, &QPushButton::clicked, this, [this]() {
+        setDetailsPanelVisible(!m_bodyDetailsPanel->isVisible());
+    });
+
     connect(&m_apiClient, &EdsmApiClient::requestStateChanged, this, [this](const QString& state) {
         m_statusLabel->setText(state);
     });
@@ -90,6 +101,10 @@ MainWindow::MainWindow(QWidget* parent)
         if (!m_currentBodies.contains(bodyId)) {
             setBodyDetailsPlaceholder(QStringLiteral("Тело не найдено в текущих данных."));
             return;
+        }
+
+        if (!m_bodyDetailsPanel->isVisible()) {
+            setDetailsPanelVisible(true);
         }
 
         m_bodyDetailsPanel->setBody(m_currentBodies.value(bodyId), m_currentBodies);
@@ -108,6 +123,8 @@ MainWindow::MainWindow(QWidget* parent)
         qDebug().noquote() << QStringLiteral("[API] Пользовательская ошибка: %1").arg(reason);
         QMessageBox::warning(this, QStringLiteral("System API"), reason);
     });
+
+    restoreUiState();
 }
 
 void MainWindow::setupUi() {
@@ -132,6 +149,7 @@ void MainWindow::setupUi() {
 
     m_loadButton = new QPushButton(QStringLiteral("Загрузить"), central);
     m_showIdsButton = new QPushButton(QStringLiteral("ID системы"), central);
+    m_toggleDetailsButton = new QPushButton(central);
     m_statusLabel = new QLabel(QStringLiteral("Ожидание запроса"), central);
 
     topPanel->addWidget(systemNameTitle);
@@ -142,21 +160,28 @@ void MainWindow::setupUi() {
     topPanel->addWidget(m_bodySizeModeCombo);
     topPanel->addWidget(m_loadButton);
     topPanel->addWidget(m_showIdsButton);
+    topPanel->addWidget(m_toggleDetailsButton);
 
     m_sceneWidget = new SystemSceneWidget(central);
 
     m_bodyDetailsPanel = new BodyDetailsWidget(central);
     m_bodyDetailsPanel->setMinimumWidth(280);
-    m_bodyDetailsPanel->setMaximumWidth(380);
     setBodyDetailsPlaceholder(QStringLiteral("Кликните по телу на карте, чтобы увидеть параметры."));
 
-    auto* contentLayout = new QHBoxLayout();
-    contentLayout->addWidget(m_bodyDetailsPanel);
-    contentLayout->addWidget(m_sceneWidget, 1);
+    m_contentSplitter = new QSplitter(Qt::Horizontal, central);
+    m_contentSplitter->addWidget(m_bodyDetailsPanel);
+    m_contentSplitter->addWidget(m_sceneWidget);
+    m_contentSplitter->setCollapsible(0, true);
+    m_contentSplitter->setCollapsible(1, false);
+    m_contentSplitter->setStretchFactor(0, 0);
+    m_contentSplitter->setStretchFactor(1, 1);
+    m_contentSplitter->setSizes({340, 860});
+
+    updateDetailsToggleText();
 
     rootLayout->addLayout(topPanel);
     rootLayout->addWidget(m_statusLabel);
-    rootLayout->addLayout(contentLayout, 1);
+    rootLayout->addWidget(m_contentSplitter, 1);
 
     setCentralWidget(central);
     resize(1200, 780);
@@ -167,4 +192,81 @@ void MainWindow::setBodyDetailsPlaceholder(const QString& text) {
     if (m_bodyDetailsPanel) {
         m_bodyDetailsPanel->setPlaceholderText(text);
     }
+}
+
+void MainWindow::setDetailsPanelVisible(const bool visible) {
+    if (!m_bodyDetailsPanel || !m_contentSplitter) {
+        return;
+    }
+
+    if (visible == m_bodyDetailsPanel->isVisible()) {
+        updateDetailsToggleText();
+        return;
+    }
+
+    if (!visible) {
+        m_lastVisibleSplitterSizes = m_contentSplitter->sizes();
+        m_bodyDetailsPanel->hide();
+        m_contentSplitter->setSizes({0, 1});
+    } else {
+        m_bodyDetailsPanel->show();
+        if (m_lastVisibleSplitterSizes.size() == 2 && m_lastVisibleSplitterSizes.at(0) > 0) {
+            m_contentSplitter->setSizes(m_lastVisibleSplitterSizes);
+        } else {
+            m_contentSplitter->setSizes({340, 860});
+        }
+    }
+
+    updateDetailsToggleText();
+}
+
+void MainWindow::saveUiState() const {
+    if (!m_contentSplitter || !m_bodyDetailsPanel) {
+        return;
+    }
+
+    QSettings settings;
+    settings.beginGroup(QStringLiteral(kSettingsGroupUi));
+    settings.setValue(QStringLiteral(kSettingsSplitterState), m_contentSplitter->saveState());
+    settings.setValue(QStringLiteral(kSettingsDetailsVisible), m_bodyDetailsPanel->isVisible());
+    settings.endGroup();
+}
+
+void MainWindow::restoreUiState() {
+    if (!m_contentSplitter || !m_bodyDetailsPanel) {
+        return;
+    }
+
+    QSettings settings;
+    settings.beginGroup(QStringLiteral(kSettingsGroupUi));
+
+    const auto splitterState = settings.value(QStringLiteral(kSettingsSplitterState)).toByteArray();
+    const bool detailsVisible = settings.value(QStringLiteral(kSettingsDetailsVisible), true).toBool();
+
+    if (!splitterState.isEmpty()) {
+        m_contentSplitter->restoreState(splitterState);
+    }
+
+    settings.endGroup();
+
+    setDetailsPanelVisible(detailsVisible);
+    if (detailsVisible) {
+        m_lastVisibleSplitterSizes = m_contentSplitter->sizes();
+    }
+}
+
+void MainWindow::updateDetailsToggleText() {
+    if (!m_toggleDetailsButton || !m_bodyDetailsPanel) {
+        return;
+    }
+
+    m_toggleDetailsButton->setText(
+        m_bodyDetailsPanel->isVisible()
+            ? QStringLiteral("Скрыть детали")
+            : QStringLiteral("Показать детали"));
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    saveUiState();
+    QMainWindow::closeEvent(event);
 }
