@@ -1,21 +1,29 @@
 #pragma once
 
+#include <QHash>
 #include <QWidget>
 
 #include "CelestialBody.h"
 
-class QTextEdit;
+class QLabel;
+class QToolBox;
 
 class BodyDetailsWidget : public QWidget {
     Q_OBJECT
 public:
     explicit BodyDetailsWidget(QWidget* parent = nullptr);
 
-    void setBody(const CelestialBody& body);
+    void setBody(const CelestialBody& body, const QHash<int, CelestialBody>& bodyMap);
     void setPlaceholderText(const QString& text);
 
 private:
-    QString bodyDetailsText(const CelestialBody& body) const;
+    void setFieldValue(const QString& key, const QString& value);
+    QString formatText(const QString& value) const;
+    QString formatId(const int id) const;
+    QString formatDouble(const double value, const int precision) const;
+    QString bodyClassText(CelestialBody::BodyClass bodyClass) const;
 
-    QTextEdit* m_textEdit = nullptr;
+    QLabel* m_placeholderLabel = nullptr;
+    QToolBox* m_toolBox = nullptr;
+    QHash<QString, QLabel*> m_fields;
 };
