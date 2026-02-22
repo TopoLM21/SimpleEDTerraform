@@ -5,9 +5,10 @@
 
 #include "CelestialBody.h"
 
-class QListWidget;
-class QListWidgetItem;
-class QTextEdit;
+class BodyDetailsWidget;
+class QSplitter;
+class QTreeWidget;
+class QTreeWidgetItem;
 
 class SystemIdsWindow : public QWidget {
     Q_OBJECT
@@ -16,10 +17,16 @@ public:
 
     void setBodies(const QHash<int, CelestialBody>& bodies);
 
-private:
-    QString bodyDetailsText(const CelestialBody& body) const;
+protected:
+    void closeEvent(QCloseEvent* event) override;
 
-    QListWidget* m_idsList = nullptr;
-    QTextEdit* m_detailsPanel = nullptr;
+private:
+    QString bodyClassGroupName(const CelestialBody& body) const;
+    void restoreSplitterState();
+    void saveSplitterState() const;
+
+    QSplitter* m_splitter = nullptr;
+    QTreeWidget* m_bodiesTree = nullptr;
+    BodyDetailsWidget* m_detailsPanel = nullptr;
     QHash<int, CelestialBody> m_bodies;
 };
