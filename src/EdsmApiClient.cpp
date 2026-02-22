@@ -326,6 +326,8 @@ bool resolveFallbackParent(const QJsonObject& bodyObj,
 struct HierarchyDiagnostic {
     QString level;
     int bodyId = -1;
+    QString bodyName;
+    int parentId = -1;
     QString parents;
     QString reason;
 };
@@ -333,10 +335,12 @@ struct HierarchyDiagnostic {
 void reportHierarchyDiagnostic(const QString& systemName,
                                const HierarchyDiagnostic& diagnostic,
                                const std::function<void(const QString&)>& onDebugInfo) {
-    onDebugInfo(QStringLiteral("[EDASTRO][%1] hierarchy diagnostics: system='%2', bodyId=%3, parents='%4', reason=%5")
+    onDebugInfo(QStringLiteral("[EDASTRO][%1] hierarchy diagnostics: system='%2', bodyId=%3, name='%4', parentId=%5, parents='%6', reason=%7")
                     .arg(diagnostic.level,
                          systemName,
                          QString::number(diagnostic.bodyId),
+                         diagnostic.bodyName.isEmpty() ? QStringLiteral("<без имени>") : diagnostic.bodyName,
+                         QString::number(diagnostic.parentId),
                          diagnostic.parents,
                          diagnostic.reason));
 }
@@ -360,6 +364,7 @@ void validateEdastroParentChains(const QVector<CelestialBody>& bodies,
                                  const QString& systemName,
                                  const std::function<void(const QString&)>& onDebugInfo) {
     QHash<int, QVector<ParentRef>> finalChainByBodyId;
+    QHash<int, CelestialBody> bodyById;
     for (const auto& body : bodies) {
         if (body.id < 0) {
             continue;
@@ -370,6 +375,18 @@ void validateEdastroParentChains(const QVector<CelestialBody>& bodies,
             chain.push_back(normalizeParentRef({body.parentRelationType, body.parentId}));
         }
         finalChainByBodyId.insert(body.id, chain);
+        bodyById.insert(body.id, body);
+
+        if (body.parentId == body.id) {
+            reportHierarchyDiagnostic(systemName,
+                                      HierarchyDiagnostic{QStringLiteral("ERROR"),
+                                                          body.id,
+                                                          body.name,
+                                                          body.parentId,
+                                                          parentChainToString(chain),
+                                                          QStringLiteral("self-parent (repair required)")},
+                                      onDebugInfo);
+        }
     }
 
     // 1) Проверяем циклы Null/Star/Planet в цепочке родителей.
@@ -388,6 +405,8 @@ void validateEdastroParentChains(const QVector<CelestialBody>& bodies,
                 reportHierarchyDiagnostic(systemName,
                                           HierarchyDiagnostic{QStringLiteral("ERROR"),
                                                               it.key(),
+                                                              bodyById.value(it.key()).name,
+                                                              bodyById.value(it.key()).parentId,
                                                               parentChainToString(it.value()),
                                                               QStringLiteral("cycle")},
                                           onDebugInfo);
@@ -414,6 +433,8 @@ void validateEdastroParentChains(const QVector<CelestialBody>& bodies,
             reportHierarchyDiagnostic(systemName,
                                       HierarchyDiagnostic{QStringLiteral("ERROR"),
                                                           it.key(),
+                                                          bodyById.value(it.key()).name,
+                                                          bodyById.value(it.key()).parentId,
                                                           parentChainToString(it.value()),
                                                           QStringLiteral("missing barycenter")},
                                       onDebugInfo);
@@ -463,6 +484,8 @@ void validateEdastroParentChains(const QVector<CelestialBody>& bodies,
         reportHierarchyDiagnostic(systemName,
                                   HierarchyDiagnostic{QStringLiteral("WARNING"),
                                                       it.key(),
+                                                      bodyById.value(it.key()).name,
+                                                      bodyById.value(it.key()).parentId,
                                                       parentChainToString(sourceChain),
                                                       QStringLiteral("multiple parents")},
                                   onDebugInfo);
@@ -658,6 +681,11 @@ bool canReachStarOrCenterRoot(const int bodyId,
     }
 
     const CelestialBody& body = it.value();
+    if (body.parentId == body.id) {
+        recursionGuard->remove(bodyId);
+        return false;
+    }
+
     if (body.bodyClass == CelestialBody::BodyClass::Star || body.id == kExternalVirtualBarycenterMarkerId) {
         recursionGuard->remove(bodyId);
         return true;
@@ -673,29 +701,54 @@ bool canReachStarOrCenterRoot(const int bodyId,
     return ok;
 }
 
-bool validateHierarchyCanReachStarOrCenterRoot(const QVector<CelestialBody>& bodies,
+bool validateHierarchyCanReachStarOrCenterRoot(QVector<CelestialBody>* bodies,
                                                const std::function<void(const QString&)>& onDebugInfo,
                                                const QString& sourceLabel) {
     QHash<int, CelestialBody> bodyById;
-    for (const auto& body : bodies) {
+    QHash<int, QString> parentChainByBodyId;
+    for (const auto& body : *bodies) {
         if (body.id >= 0) {
             bodyById.insert(body.id, body);
+            parentChainByBodyId.insert(body.id,
+                                       body.parentId >= 0
+                                           ? QStringLiteral("%1:%2")
+                                                 .arg(body.parentRelationType.isEmpty() ? QStringLiteral("Unknown")
+                                                                                         : body.parentRelationType,
+                                                      QString::number(body.parentId))
+                                           : QStringLiteral("<empty>"));
         }
     }
 
     bool allValid = true;
-    for (const auto& body : bodies) {
+    for (auto& body : *bodies) {
         if (body.id < 0) {
             continue;
+        }
+
+        if (body.parentId == body.id) {
+            allValid = false;
+            onDebugInfo(QStringLiteral("[%1][ERROR] Self-parent detected (repair): bodyId=%2, name='%3', parentId=%4, parents='%5'")
+                            .arg(sourceLabel,
+                                 QString::number(body.id),
+                                 body.name.isEmpty() ? QStringLiteral("<без имени>") : body.name,
+                                 QString::number(body.parentId),
+                                 parentChainByBodyId.value(body.id, QStringLiteral("<empty>"))));
+
+            body.parentId = kExternalVirtualBarycenterMarkerId;
+            body.parentRelationType = QStringLiteral("Null");
+            body.orbitsBarycenter = true;
+            bodyById.insert(body.id, body);
         }
 
         QSet<int> recursionGuard;
         if (!canReachStarOrCenterRoot(body.id, bodyById, &recursionGuard)) {
             allValid = false;
-            onDebugInfo(QStringLiteral("[%1][WARN] Некорректная иерархия: тело id=%2 ('%3') не имеет пути до Star:* или Null:0")
+            onDebugInfo(QStringLiteral("[%1][WARN] Некорректная иерархия: bodyId=%2, name='%3', parentId=%4, parents='%5' не имеет пути до Star:* или Null:0")
                             .arg(sourceLabel,
                                  QString::number(body.id),
-                                 body.name.isEmpty() ? QStringLiteral("<без имени>") : body.name));
+                                 body.name.isEmpty() ? QStringLiteral("<без имени>") : body.name,
+                                 QString::number(body.parentId),
+                                 parentChainByBodyId.value(body.id, QStringLiteral("<empty>"))));
         }
     }
 
@@ -707,7 +760,7 @@ bool prepareBodiesForGraph(QVector<CelestialBody>* bodies,
                            const QString& sourceLabel) {
     ensureCentralRootBody(bodies);
     attachDetachedBodiesToCenterRoot(bodies, onDebugInfo, sourceLabel);
-    return validateHierarchyCanReachStarOrCenterRoot(*bodies, onDebugInfo, sourceLabel);
+    return validateHierarchyCanReachStarOrCenterRoot(bodies, onDebugInfo, sourceLabel);
 }
 
 
