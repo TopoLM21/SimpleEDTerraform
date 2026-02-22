@@ -8,7 +8,7 @@ class QLabel;
 class QLineEdit;
 class QPushButton;
 class QComboBox;
-class QTextEdit;
+class BodyDetailsWidget;
 class SystemSceneWidget;
 class SystemIdsWindow;
 
@@ -19,7 +19,7 @@ public:
 
 private:
     void setupUi();
-    void setBodyDetailsText(const QString& text);
+    void setBodyDetailsPlaceholder(const QString& text);
 
     EdsmApiClient m_apiClient;
     QLineEdit* m_systemNameEdit = nullptr;
@@ -28,7 +28,7 @@ private:
     QComboBox* m_sourceCombo = nullptr;
     QComboBox* m_bodySizeModeCombo = nullptr;
     QLabel* m_statusLabel = nullptr;
-    QTextEdit* m_bodyDetailsPanel = nullptr;
+    BodyDetailsWidget* m_bodyDetailsPanel = nullptr;
     SystemSceneWidget* m_sceneWidget = nullptr;
     SystemIdsWindow* m_systemIdsWindow = nullptr;
     QHash<int, CelestialBody> m_currentBodies;

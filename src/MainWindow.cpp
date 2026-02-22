@@ -7,11 +7,10 @@
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QTextEdit>
 #include <QVBoxLayout>
 #include <QWidget>
 
-#include "OrbitClassifier.h"
+#include "BodyDetailsWidget.h"
 #include "SystemModelBuilder.h"
 #include "SystemIdsWindow.h"
 #include "SystemSceneWidget.h"
@@ -34,47 +33,6 @@ QString dataSourceTitle(const SystemDataSource source) {
 }
 
 } // namespace
-
-QString parentDetailsText(const CelestialBody& body, const QHash<int, CelestialBody>& bodyMap) {
-    if (body.parentId < 0) {
-        return QStringLiteral("Родитель: —");
-    }
-
-    const auto parentIt = bodyMap.constFind(body.parentId);
-    if (parentIt == bodyMap.constEnd()) {
-        return QStringLiteral("Родитель: ID %1").arg(body.parentId);
-    }
-
-    const CelestialBody& parent = parentIt.value();
-    QString parentLine = QStringLiteral("Родитель: %1 (ID %2)").arg(parent.name, QString::number(parent.id));
-
-    if (body.orbitsBarycenter && OrbitClassifier::isBarycenterType(parent.type)) {
-        // Для тел с орбитой вокруг барицентра parentId указывает именно на барицентр,
-        // который задаёт орбитальные параметры соответствующей пары.
-        parentLine += QStringLiteral(" — барицентр пары");
-    }
-
-    return parentLine;
-}
-
-QString bodyDetailsText(const CelestialBody& body, const QHash<int, CelestialBody>& bodyMap) {
-    QStringList lines;
-    lines << QStringLiteral("Название: %1").arg(body.name);
-    lines << QStringLiteral("Тип: %1").arg(body.type.isEmpty() ? QStringLiteral("—") : body.type);
-    lines << QStringLiteral("ID: %1").arg(body.id);
-    lines << parentDetailsText(body, bodyMap);
-
-    if (!body.parentRelationType.isEmpty()) {
-        lines << QStringLiteral("Связь с родителем: %1").arg(body.parentRelationType);
-    }
-
-    lines << QStringLiteral("До точки входа: %1 ls").arg(body.distanceToArrivalLs, 0, 'f', 2);
-    lines << QStringLiteral("Большая полуось: %1 AU").arg(body.semiMajorAxisAu, 0, 'f', 5);
-    lines << QStringLiteral("Детей: %1").arg(body.children.size());
-    lines << QStringLiteral("Орбита вокруг барицентра: %1").arg(body.orbitsBarycenter ? QStringLiteral("да") : QStringLiteral("нет"));
-
-    return lines.join('\n');
-}
 
 MainWindow::MainWindow(QWidget* parent)
     : QMainWindow(parent) {
@@ -130,15 +88,15 @@ MainWindow::MainWindow(QWidget* parent)
 
     connect(m_sceneWidget, &SystemSceneWidget::bodyClicked, this, [this](const int bodyId) {
         if (!m_currentBodies.contains(bodyId)) {
-            setBodyDetailsText(QStringLiteral("Тело не найдено в текущих данных."));
+            setBodyDetailsPlaceholder(QStringLiteral("Тело не найдено в текущих данных."));
             return;
         }
 
-        setBodyDetailsText(bodyDetailsText(m_currentBodies.value(bodyId), m_currentBodies));
+        m_bodyDetailsPanel->setBody(m_currentBodies.value(bodyId), m_currentBodies);
     });
 
     connect(m_sceneWidget, &SystemSceneWidget::emptyAreaClicked, this, [this]() {
-        setBodyDetailsText(QStringLiteral("Кликните по телу на карте, чтобы увидеть параметры."));
+        setBodyDetailsPlaceholder(QStringLiteral("Кликните по телу на карте, чтобы увидеть параметры."));
     });
 
     connect(&m_apiClient, &EdsmApiClient::requestDebugInfo, this, [](const QString& message) {
@@ -187,11 +145,10 @@ void MainWindow::setupUi() {
 
     m_sceneWidget = new SystemSceneWidget(central);
 
-    m_bodyDetailsPanel = new QTextEdit(central);
-    m_bodyDetailsPanel->setReadOnly(true);
+    m_bodyDetailsPanel = new BodyDetailsWidget(central);
     m_bodyDetailsPanel->setMinimumWidth(280);
     m_bodyDetailsPanel->setMaximumWidth(380);
-    setBodyDetailsText(QStringLiteral("Кликните по телу на карте, чтобы увидеть параметры."));
+    setBodyDetailsPlaceholder(QStringLiteral("Кликните по телу на карте, чтобы увидеть параметры."));
 
     auto* contentLayout = new QHBoxLayout();
     contentLayout->addWidget(m_bodyDetailsPanel);
@@ -206,8 +163,8 @@ void MainWindow::setupUi() {
     setWindowTitle(QStringLiteral("SimpleEDTerraform — EDAstro System Viewer"));
 }
 
-void MainWindow::setBodyDetailsText(const QString& text) {
+void MainWindow::setBodyDetailsPlaceholder(const QString& text) {
     if (m_bodyDetailsPanel) {
-        m_bodyDetailsPanel->setPlainText(text);
+        m_bodyDetailsPanel->setPlaceholderText(text);
     }
 }

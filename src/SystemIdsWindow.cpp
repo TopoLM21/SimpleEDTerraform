@@ -65,7 +65,7 @@ SystemIdsWindow::SystemIdsWindow(QWidget* parent)
                     return;
                 }
 
-                m_detailsPanel->setBody(m_bodies.value(bodyId));
+                m_detailsPanel->setBody(m_bodies.value(bodyId), m_bodies);
             });
 }
 
