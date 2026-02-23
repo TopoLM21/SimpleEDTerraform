@@ -53,6 +53,7 @@ private slots:
     void colLayoutPlacesBinaryStarsSymmetricallyForBodyClassBarycenter();
     void buildBodyMapSkipsSelfParentInChildren();
     void findRootBodiesReturnsRootAfterSelfParentNormalization();
+    void parsesExtendedPhysicalFieldsFromEdastroJson();
 };
 
 void EdastroHierarchyTests::eadstroBarycenterResolvesToStar() {
@@ -244,6 +245,63 @@ void EdastroHierarchyTests::colLayoutPlacesBinaryStarsSymmetricallyForBodyClassB
     QVERIFY2(qAbs(pairMidpoint.y() - barycenterPos.y()) < 0.01, "Binary pair midpoint Y must match barycenter Y");
     QVERIFY2(qAbs((cPos.x() - barycenterPos.x()) + (dPos.x() - barycenterPos.x())) < 0.01,
              "Stars must be mirrored on opposite sides of barycenter");
+}
+
+
+void EdastroHierarchyTests::parsesExtendedPhysicalFieldsFromEdastroJson() {
+    QJsonObject root;
+    root.insert(QStringLiteral("planets"),
+                QJsonArray{QJsonObject{{QStringLiteral("id"), 100},
+                                       {QStringLiteral("name"), QStringLiteral("Terraform Candidate")},
+                                       {QStringLiteral("type"), QStringLiteral("Rocky body")},
+                                       {QStringLiteral("surfaceGravity"), 9.81},
+                                       {QStringLiteral("surfaceTemperature"), 288.0},
+                                       {QStringLiteral("rotationalPeriod"), 172800.0},
+                                       {QStringLiteral("tidallyLocked"), 1},
+                                       {QStringLiteral("atmosphereType"), QStringLiteral("Earth-like")},
+                                       {QStringLiteral("surfacePressure"), 101325.0},
+                                       {QStringLiteral("earthMasses"), 1.2},
+                                       {QStringLiteral("axialTilt"), 23.4},
+                                       {QStringLiteral("volcanism"), QStringLiteral("Major")},
+                                       {QStringLiteral("terraformingState"), QStringLiteral("Candidate")},
+                                       {QStringLiteral("atmosphereComposition"),
+                                        QJsonArray{QJsonObject{{QStringLiteral("name"), QStringLiteral("Nitrogen")},
+                                                               {QStringLiteral("percent"), 78.0}},
+                                                   QJsonObject{{QStringLiteral("name"), QStringLiteral("Oxygen")},
+                                                               {QStringLiteral("percent"), 21.0}}}},
+                                       {QStringLiteral("materials"),
+                                        QJsonObject{{QStringLiteral("Iron"), 18.5},
+                                                    {QStringLiteral("Nickel"), 12.0}}}}});
+
+    QStringList diagnostics;
+    const auto bodies = parseEdastroBodiesForTests(QJsonDocument(root),
+                                                   QStringLiteral("Physical fields test"),
+                                                   [&diagnostics](const QString& message) {
+                                                       diagnostics.push_back(message);
+                                                   });
+
+    const auto map = toMap(bodies);
+    QVERIFY2(map.contains(100), "Expected parsed planet id=100");
+
+    const auto body = map.value(100);
+    QCOMPARE(body.surfaceGravityMs2, 9.81);
+    QCOMPARE(body.surfaceTemperatureK, 288.0);
+    QCOMPARE(body.rotationPeriodDays, 2.0);
+    QCOMPARE(body.isTidallyLocked, true);
+    QCOMPARE(body.atmosphereSummary, QStringLiteral("Earth-like"));
+    QCOMPARE(body.atmospherePressureAtm, 1.0);
+    QCOMPARE(body.massEarth, 1.2);
+    QCOMPARE(body.axialTiltDeg, 23.4);
+    QCOMPARE(body.volcanism, QStringLiteral("Major"));
+    QCOMPARE(body.terraformingState, QStringLiteral("Candidate"));
+
+    QCOMPARE(body.atmoComposition.size(), 2);
+    QCOMPARE(body.atmoComposition.at(0).name, QStringLiteral("Nitrogen"));
+    QCOMPARE(body.atmoComposition.at(0).percent, 78.0);
+
+    QCOMPARE(body.materials.size(), 2);
+    QCOMPARE(body.materials.at(0).name, QStringLiteral("Iron"));
+    QCOMPARE(body.materials.at(0).percent, 18.5);
 }
 
 void EdastroHierarchyTests::buildBodyMapSkipsSelfParentInChildren() {
