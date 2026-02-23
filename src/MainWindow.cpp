@@ -3,11 +3,13 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDebug>
+#include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QLineEdit>
 #include <QMessageBox>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QSettings>
 #include <QSplitter>
 #include <QVBoxLayout>
@@ -131,7 +133,9 @@ void MainWindow::setupUi() {
     auto* central = new QWidget(this);
     auto* rootLayout = new QVBoxLayout(central);
 
-    auto* topPanel = new QHBoxLayout();
+    auto* topControlsLayout = new QVBoxLayout();
+
+    auto* primaryRow = new QHBoxLayout();
     auto* systemNameTitle = new QLabel(QStringLiteral("Система:"), central);
     m_systemNameEdit = new QLineEdit(central);
     m_systemNameEdit->setPlaceholderText(QStringLiteral("Например: Sol"));
@@ -141,50 +145,65 @@ void MainWindow::setupUi() {
     m_sourceCombo->addItem(QStringLiteral("Только EDAstro"));
     m_sourceCombo->setEnabled(false);
 
-    auto* bodySizeModeTitle = new QLabel(QStringLiteral("Размер тел:"), central);
-    m_bodySizeModeCombo = new QComboBox(central);
+    m_loadButton = new QPushButton(QStringLiteral("Загрузить"), central);
+    m_toggleDetailsButton = new QPushButton(central);
+    m_statusLabel = new QLabel(QStringLiteral("Ожидание запроса"), central);
+
+    primaryRow->addWidget(systemNameTitle);
+    primaryRow->addWidget(m_systemNameEdit, 1);
+    primaryRow->addWidget(sourceTitle);
+    primaryRow->addWidget(m_sourceCombo);
+    primaryRow->addWidget(m_loadButton);
+    primaryRow->addWidget(m_toggleDetailsButton);
+
+    auto* secondarySettingsGroup = new QGroupBox(QStringLiteral("Вторичные настройки"), central);
+    auto* secondaryRow = new QHBoxLayout(secondarySettingsGroup);
+
+    auto* bodySizeModeTitle = new QLabel(QStringLiteral("Размер тел:"), secondarySettingsGroup);
+    m_bodySizeModeCombo = new QComboBox(secondarySettingsGroup);
     m_bodySizeModeCombo->addItem(QStringLiteral("VisualClamped"));
     m_bodySizeModeCombo->addItem(QStringLiteral("Physical"));
     m_bodySizeModeCombo->setToolTip(QStringLiteral("VisualClamped ограничивает максимальный экранный размер, Physical показывает физический масштаб."));
 
-    m_loadButton = new QPushButton(QStringLiteral("Загрузить"), central);
-    m_showIdsButton = new QPushButton(QStringLiteral("ID системы"), central);
-    m_toggleDetailsButton = new QPushButton(central);
-    m_statusLabel = new QLabel(QStringLiteral("Ожидание запроса"), central);
+    m_showIdsButton = new QPushButton(QStringLiteral("ID системы"), secondarySettingsGroup);
 
-    topPanel->addWidget(systemNameTitle);
-    topPanel->addWidget(m_systemNameEdit, 1);
-    topPanel->addWidget(sourceTitle);
-    topPanel->addWidget(m_sourceCombo);
-    topPanel->addWidget(bodySizeModeTitle);
-    topPanel->addWidget(m_bodySizeModeCombo);
-    topPanel->addWidget(m_loadButton);
-    topPanel->addWidget(m_showIdsButton);
-    topPanel->addWidget(m_toggleDetailsButton);
+    secondaryRow->addWidget(bodySizeModeTitle);
+    secondaryRow->addWidget(m_bodySizeModeCombo);
+    secondaryRow->addSpacing(12);
+    secondaryRow->addWidget(m_showIdsButton);
+    secondaryRow->addStretch(1);
+
+    topControlsLayout->addLayout(primaryRow);
+    topControlsLayout->addWidget(secondarySettingsGroup);
 
     m_sceneWidget = new SystemSceneWidget(central);
 
     m_bodyDetailsPanel = new BodyDetailsWidget(central);
-    m_bodyDetailsPanel->setMinimumWidth(280);
+    m_bodyDetailsPanel->setMinimumWidth(260);
+    m_bodyDetailsPanel->setMaximumWidth(420);
+    m_bodyDetailsPanel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Expanding);
+    m_sceneWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     setBodyDetailsPlaceholder(QStringLiteral("Кликните по телу на карте, чтобы увидеть параметры."));
 
     m_contentSplitter = new QSplitter(Qt::Horizontal, central);
     m_contentSplitter->addWidget(m_bodyDetailsPanel);
     m_contentSplitter->addWidget(m_sceneWidget);
-    m_contentSplitter->setCollapsible(0, true);
+    m_contentSplitter->setChildrenCollapsible(false);
+    m_contentSplitter->setCollapsible(0, false);
     m_contentSplitter->setCollapsible(1, false);
     m_contentSplitter->setStretchFactor(0, 0);
     m_contentSplitter->setStretchFactor(1, 1);
-    m_contentSplitter->setSizes({340, 860});
+    m_contentSplitter->setSizes(defaultSplitterSizesForWidth(width()));
 
     updateDetailsToggleText();
 
-    rootLayout->addLayout(topPanel);
+    rootLayout->addLayout(topControlsLayout);
     rootLayout->addWidget(m_statusLabel);
     rootLayout->addWidget(m_contentSplitter, 1);
 
     setCentralWidget(central);
     resize(1200, 780);
+    m_contentSplitter->setSizes(defaultSplitterSizesForWidth(width()));
     setWindowTitle(QStringLiteral("SimpleEDTerraform — EDAstro System Viewer"));
 }
 
@@ -213,7 +232,7 @@ void MainWindow::setDetailsPanelVisible(const bool visible) {
         if (m_lastVisibleSplitterSizes.size() == 2 && m_lastVisibleSplitterSizes.at(0) > 0) {
             m_contentSplitter->setSizes(m_lastVisibleSplitterSizes);
         } else {
-            m_contentSplitter->setSizes({340, 860});
+            m_contentSplitter->setSizes(defaultSplitterSizesForWidth(m_contentSplitter->width()));
         }
     }
 
@@ -243,8 +262,14 @@ void MainWindow::restoreUiState() {
     const auto splitterState = settings.value(QLatin1String(kSettingsSplitterState)).toByteArray();
     const bool detailsVisible = settings.value(QLatin1String(kSettingsDetailsVisible), true).toBool();
 
+    bool splitterRestored = false;
     if (!splitterState.isEmpty()) {
-        m_contentSplitter->restoreState(splitterState);
+        splitterRestored = m_contentSplitter->restoreState(splitterState);
+    }
+
+    const auto currentSizes = m_contentSplitter->sizes();
+    if (!splitterRestored || !isValidSplitterSizes(currentSizes, m_contentSplitter->width())) {
+        m_contentSplitter->setSizes(defaultSplitterSizesForWidth(m_contentSplitter->width()));
     }
 
     settings.endGroup();
@@ -253,6 +278,35 @@ void MainWindow::restoreUiState() {
     if (detailsVisible) {
         m_lastVisibleSplitterSizes = m_contentSplitter->sizes();
     }
+}
+
+
+QList<int> MainWindow::defaultSplitterSizesForWidth(const int totalWidth) const {
+    const int safeTotalWidth = qMax(totalWidth, 700);
+    const int targetDetails = qBound(260, static_cast<int>(safeTotalWidth * 0.28), 420);
+    const int sceneWidth = qMax(safeTotalWidth - targetDetails, 380);
+    return {targetDetails, sceneWidth};
+}
+
+bool MainWindow::isValidSplitterSizes(const QList<int>& sizes, const int totalWidth) const {
+    if (sizes.size() != 2) {
+        return false;
+    }
+
+    const int safeTotalWidth = qMax(totalWidth, 700);
+    const int detailsWidth = sizes.at(0);
+    const int sceneWidth = sizes.at(1);
+
+    if (detailsWidth < 260 || detailsWidth > 420) {
+        return false;
+    }
+
+    if (sceneWidth < 320) {
+        return false;
+    }
+
+    const int sum = detailsWidth + sceneWidth;
+    return sum >= static_cast<int>(safeTotalWidth * 0.75) && sum <= static_cast<int>(safeTotalWidth * 1.25);
 }
 
 void MainWindow::updateDetailsToggleText() {
