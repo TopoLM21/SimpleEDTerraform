@@ -26,6 +26,8 @@ private:
     void saveUiState() const;
     void restoreUiState();
     void updateDetailsToggleText();
+    QList<int> defaultSplitterSizesForWidth(int totalWidth) const;
+    bool isValidSplitterSizes(const QList<int>& sizes, int totalWidth) const;
 
 protected:
     void closeEvent(QCloseEvent* event) override;
