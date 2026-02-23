@@ -844,6 +844,8 @@ bool parseParentFromArray(const QJsonValue& parentsValue,
 }
 
 double readPhysicalRadiusKm(const QJsonObject& object);
+QVector<CelestialBody::CompositionPart> readCompositionParts(const QJsonObject& object, const QStringList& keys);
+void fillPhysicalFieldsFromJson(const QJsonObject& bodyObj, CelestialBody* body, bool isSpanshSource);
 
 QVector<CelestialBody> parseEdsmBodies(const QJsonObject& rootObject) {
     const auto bodiesArray = rootObject.value(QStringLiteral("bodies")).toArray();
@@ -860,6 +862,7 @@ QVector<CelestialBody> parseEdsmBodies(const QJsonObject& rootObject) {
         body.distanceToArrivalLs = bodyObj.value(QStringLiteral("distanceToArrival")).toDouble(0.0);
         body.semiMajorAxisAu = bodyObj.value(QStringLiteral("semiMajorAxis")).toDouble(0.0);
         body.physicalRadiusKm = readPhysicalRadiusKm(bodyObj);
+        fillPhysicalFieldsFromJson(bodyObj, &body, false);
 
         parseParentFromArray(bodyObj.value(QStringLiteral("parents")),
                              &body.parentId,
@@ -995,6 +998,155 @@ double readPhysicalRadiusKm(const QJsonObject& object) {
     }
 
     return 0.0;
+}
+
+QVector<CelestialBody::CompositionPart> readCompositionParts(const QJsonObject& object,
+                                                       const QStringList& keys) {
+    QVector<CelestialBody::CompositionPart> result;
+    const QJsonArray partsArray = readArray(object, keys);
+    if (!partsArray.isEmpty()) {
+        result.reserve(partsArray.size());
+        for (const auto& partValue : partsArray) {
+            if (partValue.isObject()) {
+                const auto partObj = partValue.toObject();
+                const QString name = readString(partObj,
+                                                {QStringLiteral("name"),
+                                                 QStringLiteral("material"),
+                                                 QStringLiteral("component"),
+                                                 QStringLiteral("symbol")});
+                const double percent = readDouble(partObj,
+                                                  {QStringLiteral("percent"),
+                                                   QStringLiteral("percentage"),
+                                                   QStringLiteral("share")});
+                if (!name.isEmpty() || percent > 0.0) {
+                    result.push_back({name, percent});
+                }
+                continue;
+            }
+
+            if (partValue.isString()) {
+                result.push_back({partValue.toString(), 0.0});
+            }
+        }
+    }
+
+    if (!result.isEmpty()) {
+        return result;
+    }
+
+    for (const auto& key : keys) {
+        const auto value = object.value(key);
+        if (!value.isObject()) {
+            continue;
+        }
+
+        const auto obj = value.toObject();
+        result.reserve(obj.size());
+        for (auto it = obj.constBegin(); it != obj.constEnd(); ++it) {
+            double percent = 0.0;
+            if (it.value().isDouble()) {
+                percent = it.value().toDouble(0.0);
+            } else if (it.value().isString()) {
+                bool ok = false;
+                percent = it.value().toString().toDouble(&ok);
+                if (!ok) {
+                    percent = 0.0;
+                }
+            }
+            result.push_back({it.key(), percent});
+        }
+        if (!result.isEmpty()) {
+            return result;
+        }
+    }
+
+    return result;
+}
+
+void fillPhysicalFieldsFromJson(const QJsonObject& bodyObj, CelestialBody* body, const bool isSpanshSource) {
+    body->surfaceGravityMs2 = readDouble(bodyObj,
+                                         {QStringLiteral("surfaceGravity"),
+                                          QStringLiteral("gravity"),
+                                          QStringLiteral("surface_gravity")});
+    body->surfaceTemperatureK = readDouble(bodyObj,
+                                           {QStringLiteral("surfaceTemperature"),
+                                            QStringLiteral("surfaceTemperatureK"),
+                                            QStringLiteral("temperature"),
+                                            QStringLiteral("surface_temperature")});
+
+    const double rotationSeconds = readDouble(bodyObj,
+                                              {QStringLiteral("rotationalPeriod"),
+                                               QStringLiteral("rotationPeriod"),
+                                               QStringLiteral("rotation_period"),
+                                               QStringLiteral("siderealRotationPeriod")});
+    if (rotationSeconds > 0.0) {
+        // EDSM/EDAstro обычно отдают период вращения в секундах; переводим в сутки.
+        body->rotationPeriodDays = rotationSeconds / 86400.0;
+    }
+
+    if (isSpanshSource && body->rotationPeriodDays <= 0.0) {
+        const double rotationHours = readDouble(bodyObj,
+                                                {QStringLiteral("rotationalPeriodTidallyLocked"),
+                                                 QStringLiteral("rotationPeriodHours")});
+        if (rotationHours > 0.0) {
+            // Для Spansh fallback в часах; делим на 24 для хранения в сутках.
+            body->rotationPeriodDays = rotationHours / 24.0;
+        }
+    }
+
+    body->isTidallyLocked = readInt(bodyObj,
+                                    {QStringLiteral("rotationalPeriodTidallyLocked"),
+                                     QStringLiteral("tidallyLocked"),
+                                     QStringLiteral("isTidallyLocked")},
+                                    0)
+                            != 0;
+
+    body->atmosphereSummary = readString(bodyObj,
+                                         {QStringLiteral("atmosphereType"),
+                                          QStringLiteral("atmosphere"),
+                                          QStringLiteral("atmosphere_type")});
+
+    const double pressurePa = readDouble(bodyObj,
+                                         {QStringLiteral("surfacePressure"),
+                                          QStringLiteral("atmospherePressure"),
+                                          QStringLiteral("surface_pressure")});
+    if (pressurePa > 0.0) {
+        // Основной формат — Паскали; 1 атм = 101325 Па.
+        body->atmospherePressureAtm = pressurePa / 101325.0;
+    } else {
+        body->atmospherePressureAtm = readDouble(bodyObj,
+                                                 {QStringLiteral("atmospherePressureAtm")});
+    }
+
+    body->massEarth = readDouble(bodyObj,
+                                 {QStringLiteral("earthMasses"),
+                                  QStringLiteral("earthMass"),
+                                  QStringLiteral("massEarth"),
+                                  QStringLiteral("mass")});
+    body->massSolar = readDouble(bodyObj,
+                                 {QStringLiteral("solarMasses"),
+                                  QStringLiteral("solarMass"),
+                                  QStringLiteral("massSolar")});
+    body->axialTiltDeg = readDouble(bodyObj,
+                                    {QStringLiteral("axialTilt"),
+                                     QStringLiteral("axialTiltDeg"),
+                                     QStringLiteral("axial_tilt")});
+    body->volcanism = readString(bodyObj,
+                                 {QStringLiteral("volcanismType"),
+                                  QStringLiteral("volcanism"),
+                                  QStringLiteral("volcanism_type")});
+    body->terraformingState = readString(bodyObj,
+                                         {QStringLiteral("terraformingState"),
+                                          QStringLiteral("terraforming"),
+                                          QStringLiteral("terraforming_state")});
+
+    body->atmoComposition = readCompositionParts(bodyObj,
+                                                 {QStringLiteral("atmosphereComposition"),
+                                                  QStringLiteral("atmoComposition"),
+                                                  QStringLiteral("atmosphere_composition")});
+    body->materials = readCompositionParts(bodyObj,
+                                           {QStringLiteral("materials"),
+                                            QStringLiteral("materialComposition")});
 }
 
 QString readMessageField(const QJsonObject& object) {
@@ -1190,6 +1342,7 @@ QVector<CelestialBody> parseSpanshBodies(const QJsonObject& rootObject) {
                                                    QStringLiteral("semi_major_axis")});
         body.semiMajorAxisAu = semiMajorAxisLs > 0.0 ? (semiMajorAxisLs / lightSecondsPerAu) : 0.0;
         body.physicalRadiusKm = readPhysicalRadiusKm(bodyObj);
+        fillPhysicalFieldsFromJson(bodyObj, &body, true);
 
         QVector<ParentRef> parentChain = parseParentChainFromArray(bodyObj.value(QStringLiteral("parents")));
         if (parentChain.isEmpty()) {
@@ -1372,6 +1525,7 @@ QVector<CelestialBody> parseEdastroBodiesFromObject(const QJsonObject& rootObjec
             body.semiMajorAxisAu = semiMajorAxisLs > 0.0 ? (semiMajorAxisLs / lightSecondsPerAu) : 0.0;
         }
         body.physicalRadiusKm = readPhysicalRadiusKm(bodyObj);
+        fillPhysicalFieldsFromJson(bodyObj, &body, false);
 
         body.bodyClass = classifyEdastroBodyClass(collectionKey, bodyObj, body.type);
         body.orbitsBarycenter = (body.bodyClass == CelestialBody::BodyClass::Barycenter);
