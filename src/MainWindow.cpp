@@ -136,6 +136,8 @@ void MainWindow::setupUi() {
     auto* topControlsLayout = new QVBoxLayout();
 
     auto* primaryRow = new QHBoxLayout();
+    primaryRow->setSpacing(8);
+
     auto* systemNameTitle = new QLabel(QStringLiteral("Система:"), central);
     m_systemNameEdit = new QLineEdit(central);
     m_systemNameEdit->setPlaceholderText(QStringLiteral("Например: Sol"));
@@ -153,8 +155,13 @@ void MainWindow::setupUi() {
     primaryRow->addWidget(m_systemNameEdit, 1);
     primaryRow->addWidget(sourceTitle);
     primaryRow->addWidget(m_sourceCombo);
+    primaryRow->addStretch(1);
     primaryRow->addWidget(m_loadButton);
     primaryRow->addWidget(m_toggleDetailsButton);
+
+    m_showIdsButton = new QPushButton(QStringLiteral("Все ID тел текущей системы"), central);
+    m_showIdsButton->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+    primaryRow->addWidget(m_showIdsButton);
 
     auto* secondarySettingsGroup = new QGroupBox(QStringLiteral("Вторичные настройки"), central);
     auto* secondaryRow = new QHBoxLayout(secondarySettingsGroup);
@@ -165,12 +172,9 @@ void MainWindow::setupUi() {
     m_bodySizeModeCombo->addItem(QStringLiteral("Physical"));
     m_bodySizeModeCombo->setToolTip(QStringLiteral("VisualClamped ограничивает максимальный экранный размер, Physical показывает физический масштаб."));
 
-    m_showIdsButton = new QPushButton(QStringLiteral("ID системы"), secondarySettingsGroup);
 
     secondaryRow->addWidget(bodySizeModeTitle);
     secondaryRow->addWidget(m_bodySizeModeCombo);
-    secondaryRow->addSpacing(12);
-    secondaryRow->addWidget(m_showIdsButton);
     secondaryRow->addStretch(1);
 
     topControlsLayout->addLayout(primaryRow);

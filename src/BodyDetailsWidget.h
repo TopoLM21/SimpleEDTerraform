@@ -21,7 +21,6 @@ private:
     QString fallbackText(const QString& value) const;
     QString formatText(const QString& value) const;
     QString formatDouble(const double value, const int precision) const;
-    QString formatDistanceLs(double value) const;
     QString formatSemiMajorAxis(double value) const;
     QString formatRadiusKm(double value) const;
     QString formatGravity(double valueMs2) const;
