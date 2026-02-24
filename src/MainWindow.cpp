@@ -160,8 +160,12 @@ void MainWindow::setupUi() {
     primaryRow->addWidget(m_toggleDetailsButton);
 
     m_showIdsButton = new QPushButton(QStringLiteral("Все ID тел текущей системы"), central);
-    m_showIdsButton->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
-    primaryRow->addWidget(m_showIdsButton);
+    m_showIdsButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_showIdsButton->setMinimumWidth(m_showIdsButton->sizeHint().width());
+
+    auto* actionsRow = new QHBoxLayout();
+    actionsRow->addWidget(m_showIdsButton);
+    actionsRow->addStretch(1);
 
     auto* secondarySettingsGroup = new QGroupBox(QStringLiteral("Вторичные настройки"), central);
     auto* secondaryRow = new QHBoxLayout(secondarySettingsGroup);
@@ -178,6 +182,7 @@ void MainWindow::setupUi() {
     secondaryRow->addStretch(1);
 
     topControlsLayout->addLayout(primaryRow);
+    topControlsLayout->addLayout(actionsRow);
     topControlsLayout->addWidget(secondarySettingsGroup);
 
     m_sceneWidget = new SystemSceneWidget(central);
