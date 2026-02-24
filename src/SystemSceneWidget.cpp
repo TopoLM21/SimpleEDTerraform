@@ -5,6 +5,7 @@
 
 #include <QtGlobal>
 
+#include <QFontMetrics>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QWheelEvent>
@@ -70,6 +71,129 @@ QString bodyClassLabel(const CelestialBody::BodyClass bodyClass) {
 }
 
 constexpr double visualMaxWidgetRadiusPx = 170.0;
+constexpr double bodyLabelMaxWidthPx = 220.0;
+constexpr int bodyLabelMaxLines = 2;
+
+#ifndef SIMPLE_EDT_LABEL_DEBUG
+#define SIMPLE_EDT_LABEL_DEBUG 0
+#endif
+
+bool isDebugLabelModeEnabled() {
+    static const bool enabled = (SIMPLE_EDT_LABEL_DEBUG != 0)
+        || (qEnvironmentVariableIntValue("SIMPLE_EDT_LABEL_DEBUG") > 0);
+    return enabled;
+}
+
+QString scientificTypeLabel(const CelestialBody& body) {
+    const QString type = body.type.trimmed();
+    const QString lowerType = type.toLower();
+
+    if (lowerType.contains(QStringLiteral("water world"))) {
+        return QStringLiteral("водный мир");
+    }
+    if (lowerType.contains(QStringLiteral("ice giant"))) {
+        return QStringLiteral("ледяной гигант");
+    }
+    if (lowerType.contains(QStringLiteral("gas giant"))) {
+        return QStringLiteral("газовый гигант");
+    }
+    if (lowerType.contains(QStringLiteral("earth-like"))) {
+        return QStringLiteral("землеподобный мир");
+    }
+    if (lowerType.contains(QStringLiteral("high metal")) || lowerType.contains(QStringLiteral("metal-rich"))) {
+        return QStringLiteral("металлический мир");
+    }
+    if (lowerType.contains(QStringLiteral("rocky"))) {
+        return QStringLiteral("каменистый мир");
+    }
+    if (lowerType.contains(QStringLiteral("icy")) || lowerType.contains(QStringLiteral("ice world"))) {
+        return QStringLiteral("ледяной мир");
+    }
+    if (lowerType.contains(QStringLiteral("ammonia world"))) {
+        return QStringLiteral("аммиачный мир");
+    }
+    if (lowerType.contains(QStringLiteral("helium-rich"))) {
+        return QStringLiteral("гелиевый гигант");
+    }
+    if (lowerType.contains(QStringLiteral("red dwarf"))) {
+        return QStringLiteral("красный карлик");
+    }
+    if (lowerType.contains(QStringLiteral("white dwarf"))) {
+        return QStringLiteral("белый карлик");
+    }
+    if (lowerType.contains(QStringLiteral("brown dwarf"))) {
+        return QStringLiteral("коричневый карлик");
+    }
+    if (lowerType.contains(QStringLiteral("neutron"))) {
+        return QStringLiteral("нейтронная звезда");
+    }
+    if (lowerType.contains(QStringLiteral("black hole"))) {
+        return QStringLiteral("чёрная дыра");
+    }
+
+    switch (body.bodyClass) {
+    case CelestialBody::BodyClass::Star:
+        return QStringLiteral("звезда");
+    case CelestialBody::BodyClass::Planet:
+        return QStringLiteral("планета");
+    case CelestialBody::BodyClass::Moon:
+        return QStringLiteral("луна");
+    case CelestialBody::BodyClass::Barycenter:
+        return QStringLiteral("барицентр");
+    case CelestialBody::BodyClass::Unknown:
+        break;
+    }
+
+    return QStringLiteral("неизвестный тип");
+}
+
+QString compactWrappedLabel(const QString& text, const QFontMetrics& metrics, const int maxWidthPx, const int maxLines) {
+    const QString normalized = text.simplified();
+    if (normalized.isEmpty()) {
+        return QString();
+    }
+
+    const QStringList words = normalized.split(' ', Qt::SkipEmptyParts);
+    if (words.isEmpty()) {
+        return metrics.elidedText(normalized, Qt::ElideRight, maxWidthPx);
+    }
+
+    QStringList lines;
+    QString currentLine;
+
+    for (int i = 0; i < words.size(); ++i) {
+        const QString& word = words[i];
+        const QString candidate = currentLine.isEmpty() ? word : QStringLiteral("%1 %2").arg(currentLine, word);
+        if (metrics.horizontalAdvance(candidate) <= maxWidthPx) {
+            currentLine = candidate;
+            continue;
+        }
+
+        if (!currentLine.isEmpty()) {
+            lines.push_back(currentLine);
+            if (lines.size() >= maxLines - 1) {
+                const QString remainder = words.mid(i).join(' ');
+                lines.push_back(metrics.elidedText(remainder, Qt::ElideRight, maxWidthPx));
+                return lines.join('\n');
+            }
+        }
+
+        currentLine = metrics.horizontalAdvance(word) <= maxWidthPx
+            ? word
+            : metrics.elidedText(word, Qt::ElideRight, maxWidthPx);
+    }
+
+    if (!currentLine.isEmpty()) {
+        lines.push_back(currentLine);
+    }
+
+    if (lines.size() > maxLines) {
+        lines = lines.mid(0, maxLines);
+        lines[maxLines - 1] = metrics.elidedText(lines[maxLines - 1], Qt::ElideRight, maxWidthPx);
+    }
+
+    return lines.join('\n');
+}
 }
 
 
@@ -173,7 +297,7 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
     }
 
     struct BodyLabel {
-        QPointF widgetPos;
+        QRectF rect;
         QString text;
     };
     QVector<BodyLabel> bodyLabels;
@@ -198,34 +322,39 @@ void SystemSceneWidget::paintEvent(QPaintEvent* event) {
         painter.setPen(Qt::NoPen);
         painter.drawEllipse(point, radius, radius);
 
-        QStringList labelParts;
-        labelParts.push_back(it->name);
+        const QString mainLabel = QStringLiteral("%1 — %2").arg(it->name, scientificTypeLabel(*it));
+        QString labelText = mainLabel;
 
-        if (it->orbitsBarycenter && it->parentId >= 0 && m_bodyMap.contains(it->parentId)) {
-            labelParts.push_back(QStringLiteral("вокруг барицентра"));
-        }
-
-        const QStringList typeLabels = OrbitClassifier::bodyTypeLabels(bodyTypes);
-        if (!typeLabels.isEmpty()) {
-            labelParts.push_back(typeLabels.join(QStringLiteral(", ")));
-        }
-
-        if (it.key() == m_selectedBodyId) {
+        if (isDebugLabelModeEnabled() && it.key() == m_selectedBodyId) {
             SizeSource source = SizeSource::Physical;
             bodyDrawRadiusPx(*it, bodyLayout, &source);
-            labelParts.push_back(QStringLiteral("SIZE_SRC=%1").arg(sizeSourceLabel(source)));
+            const QStringList typeLabels = OrbitClassifier::bodyTypeLabels(bodyTypes);
+            const QString debugSuffix = QStringLiteral("SIZE_SRC=%1%2")
+                .arg(sizeSourceLabel(source),
+                     typeLabels.isEmpty() ? QString() : QStringLiteral(", ORBIT=%1").arg(typeLabels.join(QStringLiteral(", "))));
+            labelText = QStringLiteral("%1 [%2]").arg(mainLabel, debugSuffix);
         }
 
-        const QPointF labelScenePos = point + QPointF(radius + 4.0 / m_zoom, -radius - 2.0 / m_zoom);
+        const QPointF labelScenePos = point + QPointF(radius + 8.0 / m_zoom, -radius - 6.0 / m_zoom);
         const QPointF labelWidgetPos = labelScenePos * m_zoom + m_panOffset;
-        bodyLabels.push_back({labelWidgetPos, labelParts.join(QStringLiteral(" | "))});
+        const QFontMetrics metrics(font());
+        const QString compactLabel = compactWrappedLabel(labelText, metrics, static_cast<int>(bodyLabelMaxWidthPx), bodyLabelMaxLines);
+        const int lineCount = qMax(1, compactLabel.count('\n') + 1);
+        const QRectF labelRect(
+            labelWidgetPos,
+            QSizeF(bodyLabelMaxWidthPx, metrics.lineSpacing() * lineCount));
+        bodyLabels.push_back({labelRect, compactLabel});
     }
 
     painter.restore();
 
     painter.setPen(QColor(220, 230, 245));
+    painter.setBrush(QColor(8, 12, 20, 190));
     for (const BodyLabel& bodyLabel : bodyLabels) {
-        painter.drawText(bodyLabel.widgetPos, bodyLabel.text);
+        painter.setPen(Qt::NoPen);
+        painter.drawRoundedRect(bodyLabel.rect.adjusted(-4.0, -2.0, 4.0, 2.0), 4.0, 4.0);
+        painter.setPen(QColor(220, 230, 245));
+        painter.drawText(bodyLabel.rect, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, bodyLabel.text);
     }
 }
 
