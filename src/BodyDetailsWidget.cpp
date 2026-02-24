@@ -60,7 +60,6 @@ BodyDetailsWidget::BodyDetailsWidget(QWidget* parent)
         addField(form, QStringLiteral("name"), QStringLiteral("Имя:"));
         addField(form, QStringLiteral("type"), QStringLiteral("Тип:"));
         addField(form, QStringLiteral("class"), QStringLiteral("Класс:"));
-        addField(form, QStringLiteral("distance"), QStringLiteral("Расстояние до прибытия:"));
     }
 
     {
@@ -102,7 +101,6 @@ void BodyDetailsWidget::setBody(const CelestialBody& body, const QHash<int, Cele
     setFieldValue(QStringLiteral("name"), formatText(body.name));
     setFieldValue(QStringLiteral("type"), formatText(body.type));
     setFieldValue(QStringLiteral("class"), bodyClassText(body.bodyClass));
-    setFieldValue(QStringLiteral("distance"), formatDistanceLs(body.distanceToArrivalLs));
 
     QString parentName = QStringLiteral("нет данных");
     if (body.parentId >= 0) {
@@ -162,11 +160,6 @@ QString BodyDetailsWidget::formatText(const QString& value) const {
 
 QString BodyDetailsWidget::formatDouble(const double value, const int precision) const {
     return qFuzzyIsNull(value) ? QString() : QString::number(value, 'f', precision);
-}
-
-QString BodyDetailsWidget::formatDistanceLs(double value) const {
-    const QString number = formatDouble(value, 2);
-    return fallbackText(number.isEmpty() ? QString() : number + QStringLiteral(" св.с"));
 }
 
 QString BodyDetailsWidget::formatSemiMajorAxis(double value) const {
