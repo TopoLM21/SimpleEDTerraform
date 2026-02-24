@@ -85,7 +85,8 @@ BodyDetailsWidget::BodyDetailsWidget(QWidget* parent)
     {
         auto* page = createSectionPage(m_toolBox, QStringLiteral("Атмосфера и состав"));
         auto* form = qobject_cast<QFormLayout*>(page->layout());
-        addField(form, QStringLiteral("composition"), QStringLiteral("Состав:"));
+        addField(form, QStringLiteral("atmosphereComposition"), QStringLiteral("Состав атмосферы:"));
+        addField(form, QStringLiteral("materials"), QStringLiteral("Состав планеты:"));
         addField(form, QStringLiteral("pressure"), QStringLiteral("Давление:"));
         addField(form, QStringLiteral("volcanism"), QStringLiteral("Вулканизм:"));
         addField(form, QStringLiteral("terraforming"), QStringLiteral("Терраформируемость:"));
@@ -131,7 +132,8 @@ void BodyDetailsWidget::setBody(const CelestialBody& body, const QHash<int, Cele
     setFieldValue(QStringLiteral("dayLength"), formatDayLength(body.rotationPeriodDays, body.isTidallyLocked));
     setFieldValue(QStringLiteral("axialTilt"), formatAxialTilt(body.axialTiltDeg));
 
-    setFieldValue(QStringLiteral("composition"), formatComposition(body.atmoComposition));
+    setFieldValue(QStringLiteral("atmosphereComposition"), formatComposition(body.atmoComposition));
+    setFieldValue(QStringLiteral("materials"), formatComposition(body.materials));
     setFieldValue(QStringLiteral("pressure"), formatPressure(body.atmospherePressureAtm));
     setFieldValue(QStringLiteral("volcanism"), formatText(body.volcanism));
     setFieldValue(QStringLiteral("terraforming"), formatText(body.terraformingState));
