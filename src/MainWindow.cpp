@@ -3,6 +3,7 @@
 #include <QCloseEvent>
 #include <QComboBox>
 #include <QDebug>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -133,39 +134,29 @@ void MainWindow::setupUi() {
     auto* central = new QWidget(this);
     auto* rootLayout = new QVBoxLayout(central);
 
-    auto* topControlsLayout = new QVBoxLayout();
-
-    auto* primaryRow = new QHBoxLayout();
-    primaryRow->setSpacing(8);
+    auto* topControlsLayout = new QGridLayout();
+    topControlsLayout->setHorizontalSpacing(8);
+    topControlsLayout->setVerticalSpacing(6);
 
     auto* systemNameTitle = new QLabel(QStringLiteral("Система:"), central);
     m_systemNameEdit = new QLineEdit(central);
     m_systemNameEdit->setPlaceholderText(QStringLiteral("Например: Sol"));
+    m_systemNameEdit->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
 
     auto* sourceTitle = new QLabel(QStringLiteral("Источник:"), central);
     m_sourceCombo = new QComboBox(central);
     m_sourceCombo->addItem(QStringLiteral("Только EDAstro"));
     m_sourceCombo->setEnabled(false);
+    m_sourceCombo->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
 
     m_loadButton = new QPushButton(QStringLiteral("Загрузить"), central);
+    m_loadButton->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
     m_toggleDetailsButton = new QPushButton(central);
+    m_toggleDetailsButton->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
     m_statusLabel = new QLabel(QStringLiteral("Ожидание запроса"), central);
 
-    primaryRow->addWidget(systemNameTitle);
-    primaryRow->addWidget(m_systemNameEdit, 1);
-    primaryRow->addWidget(sourceTitle);
-    primaryRow->addWidget(m_sourceCombo);
-    primaryRow->addStretch(1);
-    primaryRow->addWidget(m_loadButton);
-    primaryRow->addWidget(m_toggleDetailsButton);
-
     m_showIdsButton = new QPushButton(QStringLiteral("Все ID тел текущей системы"), central);
-    m_showIdsButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    m_showIdsButton->setMinimumWidth(m_showIdsButton->sizeHint().width());
-
-    auto* actionsRow = new QHBoxLayout();
-    actionsRow->addWidget(m_showIdsButton);
-    actionsRow->addStretch(1);
+    m_showIdsButton->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
 
     auto* secondarySettingsGroup = new QGroupBox(QStringLiteral("Вторичные настройки"), central);
     auto* secondaryRow = new QHBoxLayout(secondarySettingsGroup);
@@ -181,9 +172,15 @@ void MainWindow::setupUi() {
     secondaryRow->addWidget(m_bodySizeModeCombo);
     secondaryRow->addStretch(1);
 
-    topControlsLayout->addLayout(primaryRow);
-    topControlsLayout->addLayout(actionsRow);
-    topControlsLayout->addWidget(secondarySettingsGroup);
+    topControlsLayout->addWidget(systemNameTitle, 0, 0);
+    topControlsLayout->addWidget(m_systemNameEdit, 0, 1);
+    topControlsLayout->addWidget(m_loadButton, 0, 2);
+    topControlsLayout->addWidget(m_showIdsButton, 0, 3);
+    topControlsLayout->addWidget(sourceTitle, 1, 0);
+    topControlsLayout->addWidget(m_sourceCombo, 1, 1, Qt::AlignLeft);
+    topControlsLayout->addWidget(m_toggleDetailsButton, 1, 2, 1, 2, Qt::AlignLeft);
+    topControlsLayout->addWidget(secondarySettingsGroup, 2, 0, 1, 4);
+    topControlsLayout->setColumnStretch(1, 1);
 
     m_sceneWidget = new SystemSceneWidget(central);
 
@@ -211,6 +208,7 @@ void MainWindow::setupUi() {
     rootLayout->addWidget(m_contentSplitter, 1);
 
     setCentralWidget(central);
+    setMinimumWidth(920);
     resize(1200, 780);
     m_contentSplitter->setSizes(defaultSplitterSizesForWidth(width()));
     setWindowTitle(QStringLiteral("SimpleEDTerraform — EDAstro System Viewer"));
